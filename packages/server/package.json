@@ -1,0 +1,19 @@
+{
+  "name": "@guandan/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@guandan/engine": "*",
+    "@guandan/ai": "*",
+    "@guandan/protocol": "*",
+    "socket.io": "^4.8.0"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.0"
+  }
+}

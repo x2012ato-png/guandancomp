@@ -1,0 +1,19 @@
+{
+  "name": "guandan",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev:server": "npm -w @guandan/server run dev",
+    "dev:client": "npm -w @guandan/client run dev",
+    "build": "npm -w @guandan/client run build",
+    "start": "npm -w @guandan/server run start"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}
