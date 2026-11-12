@@ -146,9 +146,9 @@
   .in-game .center p{font-size:11px;margin:3px 0}
   .in-game .center .eyebrow{font-size:9px;letter-spacing:.08em}
   .in-game .played{--card-width:24px}
-  .in-game .mini-card{height:50px;padding:2px}
-  .in-game .mini-card .card-corner{font-size:10px;min-width:11px}
-  .in-game .mini-card .card-wild{font-size:8px;margin-top:1px}
+  .in-game .mini-card{height:25px;padding:1px}
+  .in-game .mini-card .card-corner{font-size:8px;min-width:11px}
+  .in-game .mini-card .card-suit{margin-top:0}
   .in-game .hand{margin-top:10px}
   .in-game .hand-head{flex-direction:row;align-items:center;gap:6px;font-size:11px}
   .in-game .hand-head .eyebrow{display:none}
@@ -187,8 +187,12 @@
 }
 @media (orientation:portrait) and (max-width:700px){
   .in-game .seat-play{width:46%}
-  .in-game .played.card-row{display:flex;flex-wrap:wrap;justify-content:center;gap:3px 0;width:100%!important;padding-right:8px}
-  .in-game .mini-card{flex:0 0 var(--card-width);margin-right:-8px}
+  .in-game .seat-play2{top:11%}
+  .in-game .seat-play3{left:14%;top:calc(76% - 25px);width:28%}
+  .in-game .seat-play0{top:89%}
+  .in-game .seat-play1{left:86%;top:calc(24% + 25px);width:28%}
+  .in-game .played.card-row{display:flex;flex-wrap:wrap;justify-content:center;gap:3px 0;width:100%!important;padding-right:12px}
+  .in-game .mini-card{flex:0 0 var(--card-width);margin-right:-12px}
   .in-game .cards.card-row{padding-top:15px;row-gap:15px}
   .in-game .card{grid-row:var(--portrait-row);grid-column:var(--portrait-column)}
   .in-game .card.group-raised{transform:translateY(-5px)}
