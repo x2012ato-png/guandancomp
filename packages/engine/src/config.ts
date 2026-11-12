@@ -32,7 +32,7 @@ export interface RulesConfig {
   readonly sameTeamTribute: boolean;
   /** 【待确认 R10】首局先出者：'random' 或固定座位。 */
   readonly firstLeader: 'random' | Seat;
-  /** 【待确认 R11】还贡牌是否对其他两家公开。默认不公开（仅进贡/还贡双方可见）。 */
+  /** 【待确认 R11】还贡牌是否对其他两家公开。默认公开。 */
   readonly publicReturnCard: boolean;
 }
 
@@ -48,7 +48,7 @@ export const DEFAULT_RULES: RulesConfig = Object.freeze({
   doubleTributeTieLeader: 'headNext',
   sameTeamTribute: true,
   firstLeader: 'random',
-  publicReturnCard: false,
+  publicReturnCard: true,
 });
 
 export function makeRules(overrides: Partial<RulesConfig> = {}): RulesConfig {

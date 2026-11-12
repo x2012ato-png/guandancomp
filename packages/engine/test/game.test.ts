@@ -214,7 +214,7 @@ describe('进贡 / 还贡 / 抗贡', () => {
   });
 
   it('双下：两人进贡，大牌归头游；还贡后进贡大者先出；还贡牌只对双方可见', () => {
-    let s = startWithTribute([0, 2, 1, 3], false);
+    let s = startWithTribute([0, 2, 1, 3], false, makeRules({ publicReturnCard: false }));
     expect(s.tribute).toMatchObject({ kind: 'double', payers: [1, 3], receivers: [0, 2] });
     const t1 = validTributeCards(s.hands[1], s.level)[0]!;
     const t3 = validTributeCards(s.hands[3], s.level)[0]!;
@@ -239,6 +239,22 @@ describe('进贡 / 还贡 / 抗贡', () => {
     expect(s.phase).toBe('playing');
     expect([1, 3]).toContain(s.turn);
     expect(checkInvariants(s)).toBeNull();
+  });
+
+  it('默认向所有玩家公开还贡牌和对应的进贡关系', () => {
+    let s = startWithTribute([0, 1, 2, 3], false);
+    const tributeCard = validTributeCards(s.hands[3], s.level)[0]!;
+    s = ok(s, { type: 'tribute', seat: 3, card: tributeCard });
+    const returnCard = validReturnCards(s.hands[0], s.level, s.config)[0]!;
+    const result = reduce(s, { type: 'returnTribute', seat: 0, card: returnCard });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const seat of [0, 1, 2, 3] as Seat[]) {
+      expect(toPlayerView(result.state, seat).tribute!.links).toMatchObject([
+        { from: 3, to: 0, card: tributeCard, returned: true, returnCard },
+      ]);
+      expect(eventsForSeat(result.events, seat)).toContainEqual({ type: 'tributeReturned', from: 0, to: 3, card: returnCard });
+    }
   });
 
   it('抗贡：进贡方持有两张大王，头游先出', () => {

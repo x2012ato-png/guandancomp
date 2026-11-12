@@ -227,7 +227,7 @@ export interface TributeView {
   readonly payers: readonly Seat[];
   readonly receivers: readonly Seat[];
   readonly paid: readonly { readonly from: Seat; readonly card: CardId }[];
-  /** returnCard 仅对进贡/还贡双方可见，其他人只看到 returned=true */
+  /** 私密还贡时，returnCard 仅对进贡/还贡双方可见，其他人只看到 returned=true */
   readonly links: readonly { from: Seat; to: Seat; card: CardId; returned: boolean; returnCard: CardId | null }[];
 }
 

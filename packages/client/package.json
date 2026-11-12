@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@guandan/ai": "*",
     "@guandan/engine": "*",
     "@guandan/protocol": "*",
     "react": "^19.0.0",
