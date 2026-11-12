@@ -16,6 +16,8 @@ import type {
   WildAssignment,
 } from '@guandan/engine';
 
+export const DEFAULT_ROOM_ID = '666888';
+
 export type ErrorCode =
   | 'RATE_LIMITED'
   | 'BAD_REQUEST'

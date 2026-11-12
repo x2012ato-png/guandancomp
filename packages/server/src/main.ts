@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { Server } from 'socket.io';
 import { createGame, reduce, pendingActors, toPlayerView, eventsForSeat, SEATS, type GameState, type ScopedEvent, type Seat } from '@guandan/engine';
 import { createHeuristicPolicy, decisionToAction } from '@guandan/ai';
-import { CHAT_HISTORY_LIMIT, CHAT_MESSAGE_MAX_LENGTH, DEAL_DURATION_MS, DEFAULT_TUNING, type ChatMessage, type ClientToServerEvents, type ServerToClientEvents, type RoomSnapshot, type GameUpdate, type AckFn } from '@guandan/protocol';
+import { CHAT_HISTORY_LIMIT, CHAT_MESSAGE_MAX_LENGTH, DEAL_DURATION_MS, DEFAULT_ROOM_ID, DEFAULT_TUNING, type ChatMessage, type ClientToServerEvents, type ServerToClientEvents, type RoomSnapshot, type GameUpdate, type AckFn } from '@guandan/protocol';
 import { SessionStore, type Session } from './sessions.ts';
 import { TokenBucket } from './rateLimit.ts';
 import { parseAction, parseConfig, parseRoomId, parseSeat, sanitizeNickname } from './validate.ts';
@@ -65,7 +65,7 @@ io.on('connection', socket => {
   socket.emit('session', { playerId: s.playerId, token: s.token, nickname: s.nickname, roomId: s.roomId });
   const existing = roomOf(s); if (existing) { broadcastRoom(existing); const seat = seatOf(existing,s); if (seat !== null && existing.game) socket.emit('game:update', update(existing,seat)); }
   function guard(ack: AckFn<any>): boolean { if (typeof ack !== 'function') return false; if (!bucket.take()) { fail(ack,'RATE_LIMITED','操作太频繁'); if (bucket.violations >= DEFAULT_TUNING.rate.maxViolations) socket.disconnect(true); return false; } return true; }
-  socket.on('room:create', (p, ack) => { if (!guard(ack)) return; if (s.roomId) return fail(ack,'BAD_REQUEST','请先离开当前房间'); let id: string; do { id = randomBytes(3).toString('hex').toUpperCase(); } while (rooms.has(id)); const r: Room = { messages: [], id, host:s.playerId, members:new Set([s.playerId]), seats:[null,null,null,null], config:parseConfig(p?.config), game:null, version:0,timer:null,deadline:null,dealingStartedAt:null }; rooms.set(id,r); s.roomId=id; ok(ack,snapshot(r,s)); broadcastRoom(r); });
+  socket.on('room:create', (p, ack) => { if (!guard(ack)) return; if (s.roomId) return fail(ack,'BAD_REQUEST','请先离开当前房间'); const id = DEFAULT_ROOM_ID; if (rooms.has(id)) return fail(ack,'BAD_REQUEST','房间 666888 已存在，请加入现有房间'); const r: Room = { messages: [], id, host:s.playerId, members:new Set([s.playerId]), seats:[null,null,null,null], config:parseConfig(p?.config), game:null, version:0,timer:null,deadline:null,dealingStartedAt:null }; rooms.set(id,r); s.roomId=id; ok(ack,snapshot(r,s)); broadcastRoom(r); });
   socket.on('room:join', (p,ack) => {
     if (!guard(ack)) return;
     if (s.roomId) return fail(ack,'BAD_REQUEST','请先离开当前房间');

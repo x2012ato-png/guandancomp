@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { io, type Socket } from 'socket.io-client';
 import { CHAT_MESSAGE_MAX_LENGTH, DEAL_DURATION_MS, type ClientToServerEvents, type ServerToClientEvents, type SessionInfo, type GameUpdate } from '@guandan/protocol';
@@ -21,12 +21,34 @@ function waitForDeal(socket: Client): Promise<GameUpdate> {
     socket.on('game:update', onUpdate);
   });
 }
-beforeAll(async () => {
+beforeEach(async () => {
   server = spawn(process.execPath, ['packages/server/src/main.ts'], { env: { ...process.env, PORT: String(port) } });
   await new Promise<void>((resolve, reject) => { server.stdout!.on('data', chunk => { if (String(chunk).includes('listening')) resolve(); }); server.once('error', reject); server.once('exit', code => reject(new Error(`server exited ${code}`))); });
 });
-afterAll(() => { clients.forEach(c => c.disconnect()); server?.kill(); });
+afterEach(async () => {
+  clients.splice(0).forEach(c => c.disconnect());
+  if (server && server.exitCode === null) {
+    const exited = new Promise<void>(resolve => server.once('exit', () => resolve()));
+    server.kill();
+    await exited;
+  }
+});
 describe('room service', () => {
+  it('uses the fixed room code without replacing an existing room', async () => {
+    const host = await connect(undefined, 'Host');
+    const other = await connect(undefined, 'Other');
+    const created = await host.socket.emitWithAck('room:create', {});
+    expect(created.ok && created.data.roomId).toBe('666888');
+    const duplicate = await other.socket.emitWithAck('room:create', {});
+    expect(duplicate.ok).toBe(false);
+    const joined = await other.socket.emitWithAck('room:join', {roomId: '666888'});
+    expect(joined.ok && joined.data.hostId).toBe(host.session.playerId);
+    expect((await host.socket.emitWithAck('room:leave')).ok).toBe(true);
+    expect((await other.socket.emitWithAck('room:leave')).ok).toBe(true);
+    const recreated = await other.socket.emitWithAck('room:create', {});
+    expect(recreated.ok && recreated.data.roomId).toBe('666888');
+  });
+
   it('keeps chat within the room, validates messages, and restores history on reconnect', async () => {
     const alice = await connect(undefined, 'Chat Alice');
     const bob = await connect(undefined, 'Chat Bob');
@@ -34,7 +56,6 @@ describe('room service', () => {
     const created = await alice.socket.emitWithAck('room:create', {});
     if (!created.ok) throw new Error('Room creation failed');
     expect((await bob.socket.emitWithAck('room:join', {roomId:created.data.roomId})).ok).toBe(true);
-    expect((await outsider.socket.emitWithAck('room:create', {})).ok).toBe(true);
     let leaked = false;
     outsider.socket.on('chat:message', () => { leaked = true; });
     const received = new Promise<Parameters<ServerToClientEvents['chat:message']>[0]>(resolve => bob.socket.once('chat:message', resolve));
@@ -45,7 +66,7 @@ describe('room service', () => {
     expect((await alice.socket.emitWithAck('chat:send', {text:'   '})).ok).toBe(false);
     expect((await alice.socket.emitWithAck('chat:send', {text:'x'.repeat(CHAT_MESSAGE_MAX_LENGTH+1)})).ok).toBe(false);
     const otherHistory = await outsider.socket.emitWithAck('chat:history');
-    expect(otherHistory.ok && otherHistory.data).toEqual([]);
+    expect(otherHistory.ok).toBe(false);
     expect(leaked).toBe(false);
     bob.socket.disconnect();
     const restored = await connect(bob.session.token);
