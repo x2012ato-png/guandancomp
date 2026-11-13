@@ -152,10 +152,8 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
   if (best && best.cost <= limit) return { type: 'play', play: best.play };
 
   if (bombs.length > 0) {
-    // 下家就是队友且对手不危险时，留给队友处理
-    const partnerNext = nextSeat(me) === partner && partnerCount > 0;
     const nearlyDone = before.turns <= 2;
-    const wantBomb = danger || (nearlyDone && !partnerNext);
+    const wantBomb = danger || nearlyDone;
     if (wantBomb) {
       bombs.sort((a, b) => a.cost - b.cost);
       return { type: 'play', play: bombs[0]!.play };

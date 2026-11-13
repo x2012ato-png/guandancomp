@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { io, type Socket } from 'socket.io-client';
 import { CHAT_MESSAGE_MAX_LENGTH, DEAL_DURATION_MS, type ClientToServerEvents, type ServerToClientEvents, type SessionInfo, type GameUpdate } from '@guandan/protocol';
-import { interpret } from '@guandan/engine';
+import { cardLabel, interpret } from '@guandan/engine';
 
 type Client = Socket<ServerToClientEvents, ClientToServerEvents>;
 let server: ChildProcess;
+let logDirectory: string;
+let logPath: string;
 const clients: Client[] = [];
 const port = 32000 + Math.floor(Math.random() * 20000);
 function connect(token?: string, nickname?: string): Promise<{socket: Client; session: SessionInfo}> {
@@ -22,7 +27,9 @@ function waitForDeal(socket: Client): Promise<GameUpdate> {
   });
 }
 beforeEach(async () => {
-  server = spawn(process.execPath, ['packages/server/src/main.ts'], { env: { ...process.env, PORT: String(port) } });
+  logDirectory = mkdtempSync(join(tmpdir(), 'guandan-room-test-'));
+  logPath = join(logDirectory, 'played_cards_log.md');
+  server = spawn(process.execPath, ['packages/server/src/main.ts'], { env: { ...process.env, PORT: String(port), GUANDAN_PLAYED_CARDS_LOG: logPath, CORS_ORIGIN: 'https://coach.example' } });
   await new Promise<void>((resolve, reject) => { server.stdout!.on('data', chunk => { if (String(chunk).includes('listening')) resolve(); }); server.once('error', reject); server.once('exit', code => reject(new Error(`server exited ${code}`))); });
 });
 afterEach(async () => {
@@ -32,13 +39,43 @@ afterEach(async () => {
     server.kill();
     await exited;
   }
+  rmSync(logDirectory, { recursive: true, force: true });
 });
 describe('room service', () => {
+  it('serves the latest log as JSON and handles missing files, read errors, and CORS', async () => {
+    const url = `http://127.0.0.1:${port}/api/played-cards-log`;
+    const missing = await fetch(url, { headers: { Origin: 'https://coach.example' } });
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: 'LOG_NOT_FOUND' });
+    expect(missing.headers.get('access-control-allow-origin')).toBe('https://coach.example');
+    expect(missing.headers.get('cache-control')).toBe('no-store');
+    writeFileSync(logPath, '# 第 1 局\n1. 出牌\n');
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ format: 'markdown', content: '# 第 1 局\n1. 出牌\n' });
+    writeFileSync(logPath, '# 第 2 局\n');
+    const second = await fetch(url, { headers: { Origin: 'https://untrusted.example' } });
+    expect(second.headers.get('access-control-allow-origin')).toBeNull();
+    expect(await second.json()).toEqual({ format: 'markdown', content: '# 第 2 局\n' });
+    const options = await fetch(url, { method: 'OPTIONS', headers: { Origin: 'https://coach.example' } });
+    expect(options.status).toBe(204);
+    expect(options.headers.get('access-control-allow-methods')).toBe('GET, OPTIONS');
+    const post = await fetch(url, { method: 'POST' });
+    expect(post.status).toBe(405);
+    expect(await post.json()).toEqual({ error: 'METHOD_NOT_ALLOWED' });
+    rmSync(logPath);
+    mkdirSync(logPath);
+    const failed = await fetch(url);
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: 'LOG_READ_FAILED' });
+  });
+
   it('uses the fixed room code without replacing an existing room', async () => {
     const host = await connect(undefined, 'Host');
     const other = await connect(undefined, 'Other');
     const created = await host.socket.emitWithAck('room:create', {});
     expect(created.ok && created.data.roomId).toBe('666888');
+    expect(created.ok && created.data.config.publicReturnCard).toBe(false);
     const duplicate = await other.socket.emitWithAck('room:create', {});
     expect(duplicate.ok).toBe(false);
     const joined = await other.socket.emitWithAck('room:join', {roomId: '666888'});
@@ -174,6 +211,14 @@ describe('room service', () => {
     expect((await restored.socket.emitWithAck('game:action', {type:'play', cards:play.cards, combo:{type:play.combo.type,key:play.combo.key,...(play.combo.suit ? {suit:play.combo.suit} : {})}, wildAssignments:play.wildAssignments})).ok).toBe(true);
     const follower = players[(turn+1)%4]!.socket;
     expect((await follower.emitWithAck('game:action',{type:'pass'})).ok).toBe(true);
+    const logged = readFileSync(logPath, 'utf8');
+    expect(logged).toContain('# 出牌记录：第 1 局');
+    expect(logged).toContain(`座位 ${turn}） 出牌：${cardLabel(play.cards[0]!)}（ID ${play.cards[0]}）`);
+    expect(logged).toContain(`座位 ${(turn+1)%4}） 不要`);
+    expect(logged.indexOf('出牌：')).toBeLessThan(logged.indexOf('不要'));
+    const logResponse = await fetch(`http://127.0.0.1:${port}/api/played-cards-log`);
+    expect(logResponse.status).toBe(200);
+    expect(await logResponse.json()).toEqual({ format: 'markdown', content: logged });
     const afterPass = await observer.emitWithAck('game:sync');
     expect(afterPass.ok).toBe(true); if (!afterPass.ok || !afterPass.data) throw new Error('Missing game');
     expect(afterPass.data.view.trick?.passed).toContain((turn+1)%4);
@@ -184,6 +229,10 @@ describe('room service', () => {
       observer.on('game:update', onUpdate);
     });
     expect((await players[autoSeat]!.socket.emitWithAck('game:autoplay',{on:true})).ok).toBe(true);
-    expect((await advanced).version).toBeGreaterThan(afterPass.data.version);
+    const automated = await advanced;
+    expect(automated.version).toBeGreaterThan(afterPass.data.version);
+    const action = automated.events.find(event => (event.type === 'played' || event.type === 'passed') && event.seat === autoSeat);
+    expect(action).toBeDefined();
+    expect(readFileSync(logPath, 'utf8')).toContain(`座位 ${autoSeat}） ${action?.type === 'played' ? '出牌：' : '不要'}`);
   },DEAL_DURATION_MS + 10000);
 });

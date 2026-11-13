@@ -221,3 +221,48 @@
 
 .in-game .controls .wild-choice{display:flex;align-items:center;gap:6px;margin:0;min-width:0;max-width:100%;white-space:nowrap}
 .in-game .controls .wild-choice select{min-width:0;max-width:220px;flex:0 1 auto}
+
+/* An optional portrait layout gives each player's latest action its own row. */
+.portrait-layout-toggle{display:none}
+@media (orientation:portrait) and (max-width:700px){
+  .in-game .portrait-layout-toggle,.in-room .portrait-layout-toggle{display:inline-block}
+  .portrait-layout-toggle[aria-pressed="true"]{background:#d5b36d;color:#172c23;border-color:#d5b36d}
+  .room-actions{flex-wrap:wrap;max-width:100%}
+  .in-game.six-row-layout .table{display:grid;grid-template-columns:minmax(86px,30%) minmax(0,1fr);grid-template-rows:auto repeat(4,minmax(56px,1fr));gap:0 8px;height:auto;min-height:0;padding:6px 10px;border-radius:18px}
+  .in-game.six-row-layout .center,.in-game.six-row-layout .deal-animation + .center{position:static;grid-column:1 / -1;grid-row:1;transform:none;width:auto;text-align:left;padding:0 2px 4px}
+  .in-game.six-row-layout .seat{position:static;grid-column:1;transform:none;max-width:none;min-width:0;padding:4px 2px;border-top:1px solid #ffffff25}
+  /* Keep teammates two rows apart, with each play beside its player. */
+  .in-game.six-row-layout .seat0,.in-game.six-row-layout .seat-play0{grid-row:4}
+  .in-game.six-row-layout .seat1,.in-game.six-row-layout .seat-play1{grid-row:5}
+  .in-game.six-row-layout .seat2,.in-game.six-row-layout .seat-play2{grid-row:2}
+  .in-game.six-row-layout .seat3,.in-game.six-row-layout .seat-play3{grid-row:3}
+  .in-game.six-row-layout .seat .seat-info{display:block;min-width:0;line-height:1.35}
+  .in-game.six-row-layout .seat strong{max-width:100%}
+  .in-game.six-row-layout .seat small{white-space:normal}
+  .in-game.six-row-layout .seat-play{position:static;grid-column:2;transform:none;width:auto;min-width:0;align-self:stretch;display:flex;align-items:center;border-top:1px solid #ffffff25}
+  .in-game.six-row-layout .played{--card-width:28px;margin:0;gap:0}
+  .in-game.six-row-layout .played.card-row,.in-game.six-row-layout .cards.card-row{width:min(100%,calc(var(--card-count) * var(--card-width)))!important}
+  .in-game.six-row-layout .mini-card{height:38px;padding:2px}
+  .in-game.six-row-layout .mini-card .card-corner{font-size:16px;min-width:0}
+  .in-game.six-row-layout .card-corner{font-size:18px;min-width:0}
+  .in-game.six-row-layout .card-suit,.in-game.six-row-layout .card-wild{margin-top:0}
+  .in-game.six-row-layout .card-wild{font-size:7px}
+  .in-game.six-row-layout .card .card-rank.joker{font-size:.46em}
+  .in-game.six-row-layout .seat-pass{text-align:left}
+  /* The deck sits in the play column and deals to the four player rows. */
+  .in-game.six-row-layout .deal-animation{position:relative;grid-column:2;grid-row:2 / 6;left:auto;top:auto;width:auto;height:auto;transform:none;z-index:2}
+  .in-game.six-row-layout .deck-card,.in-game.six-row-layout .flying-card{inset:auto;left:85%;top:50%;width:28px;height:38px;transform:translate(-50%,-50%)}
+  .in-game.six-row-layout .deck-card1{transform:translate(-50%,-50%) rotate(-7deg)}
+  .in-game.six-row-layout .deck-card2{transform:translate(-50%,-50%) rotate(6deg)}
+  .in-game.six-row-layout .shuffling .deck-card1{animation-name:six-row-shuffle-left}
+  .in-game.six-row-layout .shuffling .deck-card2{animation-name:six-row-shuffle-right}
+  .in-game.six-row-layout .flying-card{animation-name:six-row-deal}
+  .in-game.six-row-layout .flying-card0{--row-top:62.5%}
+  .in-game.six-row-layout .flying-card1{--row-top:87.5%}
+  .in-game.six-row-layout .flying-card2{--row-top:12.5%}
+  .in-game.six-row-layout .flying-card3{--row-top:37.5%}
+}
+@keyframes six-row-shuffle-left{to{transform:translate(calc(-50% - 18px),-50%) rotate(-18deg)}}
+@keyframes six-row-shuffle-right{to{transform:translate(calc(-50% + 18px),-50%) rotate(18deg)}}
+@keyframes six-row-deal{0%{opacity:1;left:85%;top:50%;transform:translate(-50%,-50%) scale(1)} 80%{opacity:1} 100%{opacity:0;left:20%;top:var(--row-top);transform:translate(-50%,-50%) scale(.65)}}
+@media (prefers-reduced-motion:reduce){.in-game.six-row-layout .deck-card,.in-game.six-row-layout .flying-card{animation:none}}

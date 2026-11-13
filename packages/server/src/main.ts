@@ -7,14 +7,37 @@ import { CHAT_HISTORY_LIMIT, CHAT_MESSAGE_MAX_LENGTH, DEAL_DURATION_MS, DEFAULT_
 import { SessionStore, type Session } from './sessions.ts';
 import { TokenBucket } from './rateLimit.ts';
 import { parseAction, parseConfig, parseRoomId, parseSeat, sanitizeNickname } from './validate.ts';
+import { PlayedCardsLog } from './playedCardsLog.ts';
 
 type Slot = { playerId: string; nickname: string; bot: boolean; auto: boolean; ready: boolean } | null;
 type Room = { messages: ChatMessage[]; id: string; host: string; members: Set<string>; seats: [Slot, Slot, Slot, Slot]; config: ReturnType<typeof parseConfig>; game: GameState | null; version: number; timer: ReturnType<typeof setTimeout> | null; deadline: number | null; dealingStartedAt: number | null };
 const sessions = new SessionStore();
 const rooms = new Map<string, Room>();
 const ai = createHeuristicPolicy();
-const http = createServer((_req, res) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('Guandan server'); });
-const io = new Server<ClientToServerEvents, ServerToClientEvents>(http, { cors: { origin: process.env.CORS_ORIGIN?.split(',') ?? true } });
+const playedCardsLog = new PlayedCardsLog();
+const corsOrigins = process.env.CORS_ORIGIN?.split(',').map(origin => origin.trim());
+const http = createServer((req, res) => {
+  if (req.url?.split('?')[0] !== '/api/played-cards-log') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('Guandan server'); return;
+  }
+  const origin = req.headers.origin;
+  if (!corsOrigins) res.setHeader('Access-Control-Allow-Origin', '*');
+  else if (origin && corsOrigins.includes(origin)) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Allow', 'GET, OPTIONS');
+  if (req.method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS'); res.writeHead(204); res.end(); return; }
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (req.method !== 'GET') { res.writeHead(405); res.end(JSON.stringify({ error: 'METHOD_NOT_ALLOWED' })); return; }
+  try {
+    const content = playedCardsLog.read();
+    res.writeHead(200); res.end(JSON.stringify({ format: 'markdown', content }));
+  } catch (error) {
+    const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+    if (!missing) console.error('Failed to read played cards log', error);
+    res.writeHead(missing ? 404 : 500); res.end(JSON.stringify({ error: missing ? 'LOG_NOT_FOUND' : 'LOG_READ_FAILED' }));
+  }
+});
+const io = new Server<ClientToServerEvents, ServerToClientEvents>(http, { cors: { origin: corsOrigins ?? true } });
 const fail = (ack: AckFn<any>, code: string, message: string) => ack({ ok: false, error: { code, message } });
 const ok = (ack: AckFn<any>, data: any = null) => ack({ ok: true, data });
 const roomOf = (s: Session) => s.roomId ? rooms.get(s.roomId) : undefined;
@@ -56,7 +79,7 @@ function schedule(r: Room) {
     if (result.ok) commit(r, result.state, result.events); else console.error('AI action rejected', result.error);
   }, delay);
 }
-function commit(r: Room, state: GameState, events: readonly ScopedEvent[]) { r.game = state; r.version++; if (state.phase === 'handOver') for (const s of r.seats) if (s) s.ready = s.bot; schedule(r); broadcastRoom(r); broadcastGame(r, events); }
+function commit(r: Room, state: GameState, events: readonly ScopedEvent[]) { r.game = state; r.version++; try { playedCardsLog.record(r.id, r.seats, events); } catch (error) { console.error('Failed to write played cards log', error); } if (state.phase === 'handOver') for (const s of r.seats) if (s) s.ready = s.bot; schedule(r); broadcastRoom(r); broadcastGame(r, events); }
 function startHand(r: Room) { if (!r.game) return; const result = reduce(r.game, { type: 'startHand' }); if (result.ok) { r.dealingStartedAt = Date.now(); commit(r, result.state, result.events); } }
 function leave(s: Session) { const r = roomOf(s); if (!r) { s.roomId = null; return; } const seat = seatOf(r,s); if (r.game && seat !== null && r.game.phase !== 'matchOver') { const slot = r.seats[seat]!; slot.bot = true; slot.auto = true; slot.playerId = `bot:${randomBytes(8).toString('hex')}`; slot.nickname += ' (机器人)'; } else if (seat !== null) r.seats[seat] = null; r.members.delete(s.playerId); s.roomId = null; if (!r.members.size) { if (r.timer) clearTimeout(r.timer); rooms.delete(r.id); return; } if (r.host === s.playerId) r.host = [...r.members][0]!; schedule(r); broadcastRoom(r); }
 io.on('connection', socket => {

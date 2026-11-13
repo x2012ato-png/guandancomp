@@ -213,8 +213,9 @@ describe('进贡 / 还贡 / 抗贡', () => {
     expect(checkInvariants(s)).toBeNull();
   });
 
-  it('双下：两人进贡，大牌归头游；还贡后进贡大者先出；还贡牌只对双方可见', () => {
-    let s = startWithTribute([0, 2, 1, 3], false, makeRules({ publicReturnCard: false }));
+  it('双下：两人进贡，大牌归头游；默认还贡牌只对双方可见', () => {
+    let s = startWithTribute([0, 2, 1, 3], false);
+    expect(s.config.publicReturnCard).toBe(false);
     expect(s.tribute).toMatchObject({ kind: 'double', payers: [1, 3], receivers: [0, 2] });
     const t1 = validTributeCards(s.hands[1], s.level)[0]!;
     const t3 = validTributeCards(s.hands[3], s.level)[0]!;
@@ -241,8 +242,8 @@ describe('进贡 / 还贡 / 抗贡', () => {
     expect(checkInvariants(s)).toBeNull();
   });
 
-  it('默认向所有玩家公开还贡牌和对应的进贡关系', () => {
-    let s = startWithTribute([0, 1, 2, 3], false);
+  it('配置公开时向所有玩家公开还贡牌和对应的进贡关系', () => {
+    let s = startWithTribute([0, 1, 2, 3], false, makeRules({ publicReturnCard: true }));
     const tributeCard = validTributeCards(s.hands[3], s.level)[0]!;
     s = ok(s, { type: 'tribute', seat: 3, card: tributeCard });
     const returnCard = validReturnCards(s.hands[0], s.level, s.config)[0]!;
