@@ -1,5 +1,8 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { extname, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { createGame, reduce, pendingActors, toPlayerView, eventsForSeat, SEATS, type GameState, type ScopedEvent, type Seat } from '@guandan/engine';
 import { createHeuristicPolicy, decisionToAction } from '@guandan/ai';
@@ -16,9 +19,32 @@ const rooms = new Map<string, Room>();
 const ai = createHeuristicPolicy();
 const playedCardsLog = new PlayedCardsLog();
 const corsOrigins = process.env.CORS_ORIGIN?.split(',').map(origin => origin.trim());
+const clientDir = fileURLToPath(new URL('../../client/dist/', import.meta.url));
+const contentTypes: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon',
+  '.woff': 'font/woff', '.woff2': 'font/woff2',
+};
 const http = createServer((req, res) => {
-  if (req.url?.split('?')[0] !== '/api/played-cards-log') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('Guandan server'); return;
+  const pathname = req.url?.split('?')[0] ?? '/';
+  if (pathname === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('OK'); return; }
+  if (pathname !== '/api/played-cards-log') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
+    let path: string;
+    try { path = decodeURIComponent(pathname === '/' ? '/index.html' : pathname); }
+    catch { res.writeHead(400); res.end(); return; }
+    const file = resolve(clientDir, `.${path}`);
+    if (!file.startsWith(clientDir.endsWith(sep) ? clientDir : clientDir + sep)) { res.writeHead(404); res.end(); return; }
+    void readFile(file).then(content => {
+      res.writeHead(200, { 'Content-Type': contentTypes[extname(file).toLowerCase()] ?? 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' });
+      res.end(req.method === 'HEAD' ? undefined : content);
+    }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT' && error.code !== 'EISDIR') console.error('Failed to read client file', error);
+      res.writeHead(error.code === 'ENOENT' || error.code === 'EISDIR' ? 404 : 500); res.end();
+    });
+    return;
   }
   const origin = req.headers.origin;
   if (!corsOrigins) res.setHeader('Access-Control-Allow-Origin', '*');

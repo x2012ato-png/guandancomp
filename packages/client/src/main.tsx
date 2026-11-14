@@ -8,7 +8,7 @@ import { groupHand, layoutHand } from './handLayout.ts';
 import { TributeInfo } from './TributeInfo.tsx';
 import './style.css';
 
-const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(import.meta.env.VITE_SERVER_URL || `${location.protocol}//${location.hostname}:3001`, { autoConnect: false, auth: { token: localStorage.getItem('guandan-token') || undefined } });
+const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(import.meta.env.VITE_SERVER_URL || (import.meta.env.DEV ? `${location.protocol}//${location.hostname}:3001` : location.origin), { autoConnect: false, auth: { token: localStorage.getItem('guandan-token') || undefined } });
 function cardRowStyle(count: number) {
  return { gridTemplateColumns: count > 1 ? `repeat(${count - 1}, minmax(0, 1fr)) var(--card-width)` : 'var(--card-width)', width: `min(100%, calc(${Math.max(count - 1, 0) * 26}px + var(--card-width)))`, '--card-count': count };
 }
