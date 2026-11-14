@@ -12,6 +12,7 @@ import { TokenBucket } from './rateLimit.ts';
 import { parseAction, parseConfig, parseRoomId, parseSeat, sanitizeNickname } from './validate.ts';
 import { PlayedCardsLog } from './playedCardsLog.ts';
 import { botDelay } from './botDelay.ts';
+import { shouldAutoPass } from './autoPass.ts';
 import { nextHandDeadline, toggleReady } from './nextHand.ts';
 
 type Slot = { playerId: string; nickname: string; bot: boolean; auto: boolean; ready: boolean } | null;
@@ -96,6 +97,15 @@ function schedule(r: Room) {
     r.timer = setTimeout(() => startHand(r), Math.max(0, r.deadline - Date.now())); return;
   }
   const actors = pendingActors(r.game); if (!actors.length) return;
+  const forcedPass = actors.find(seat => !r.seats[seat]?.bot && shouldAutoPass(r.game!, seat));
+  if (forcedPass !== undefined) {
+    r.timer = setTimeout(() => {
+      if (!r.game || !shouldAutoPass(r.game, forcedPass)) return;
+      const result = reduce(r.game, { type: 'pass', seat: forcedPass });
+      if (result.ok) commit(r, result.state, result.events);
+    }, 500);
+    return;
+  }
   const automated = actors.find(seat => { const slot = r.seats[seat]!; return slot.bot || slot.auto; });
   if (automated === undefined) return;
   const delay = r.seats[automated]?.bot ? botDelay(r.game, r.seats, DEFAULT_TUNING.botDelayMs) : DEFAULT_TUNING.botDelayMs;

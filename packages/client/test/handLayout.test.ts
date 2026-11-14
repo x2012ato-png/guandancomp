@@ -20,6 +20,20 @@ describe('手牌规划与布局', () => {
     expect(groups.find(group => group.label === '逢人配')!.cards).toEqual([hand[5]]);
   });
 
+  it('优先分组同花顺，包括逢人配补牌，并保留全部手牌', () => {
+    for (const hand of [cards('S3 S4 S5 S6 S7 D9'), cards('S3 S4 S5 S7 H2 D9')]) {
+      const groups = groupHand(hand, 2, makeRules(), true);
+      expect(groups[0]!.label).toBe('同花顺');
+      expect(interpret(groups[0]!.cards, 2, makeRules()).some(play => play.combo.type === 'straightFlush')).toBe(true);
+      expect(groups.flatMap(group => group.cards).sort((a, b) => a - b)).toEqual([...hand].sort((a, b) => a - b));
+    }
+  });
+
+  it('可优先保留多组互不重叠的同花顺', () => {
+    const hand = cards('S3 S4 S5 S6 S7 D3 D4 D5 D6 D7');
+    expect(groupHand(hand, 2, makeRules(), true).filter(group => group.label === '同花顺')).toHaveLength(2);
+  });
+
   it('两排之间只在组间换行，并保留所有牌', () => {
     const groups = groupHand(makeDeck().slice(0, 27), 2);
     const layout = layoutHand(groups);

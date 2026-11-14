@@ -1,5 +1,5 @@
 import { planHand, type GroupKind } from '@guandan/ai';
-import { sortHand, type CardId, type Level } from '@guandan/engine';
+import { generatePlays, makeRules, sortHand, type CardId, type Level, type RulesConfig } from '@guandan/engine';
 
 export interface HandGroup {
   readonly label: string;
@@ -20,12 +20,24 @@ const labels: Record<GroupKind, string> = {
 };
 
 /** Plan using only the player's own cards. Wild cards remain available separately. */
-export function groupHand(hand: readonly CardId[], level: Level): HandGroup[] {
-  const plan = planHand(sortHand(hand, level), level);
+export function groupHand(hand: readonly CardId[], level: Level, config: RulesConfig = makeRules(), highlightStraightFlush = false): HandGroup[] {
+  let remaining = [...hand];
+  const straightFlushes: HandGroup[] = [];
+  if (highlightStraightFlush) {
+    while (true) {
+      const candidates = generatePlays(remaining, level, config).filter(play => play.combo.type === 'straightFlush');
+      candidates.sort((a, b) => a.wildAssignments.length - b.wildAssignments.length || b.combo.key - a.combo.key);
+      const play = candidates[0];
+      if (!play) break;
+      straightFlushes.push({ label: '同花顺', cards: play.cards });
+      remaining = remaining.filter(card => !play.cards.includes(card));
+    }
+  }
+  const plan = planHand(sortHand(remaining, level), level);
   const pairs = plan.groups.filter(group => group.kind === 'pair');
   const pairForTriple = new Map(plan.groups.filter(group => group.kind === 'triple').slice(0, pairs.length).map((group, index) => [group, pairs[index]!]));
   const usedPairs = new Set(pairForTriple.values());
-  const result: HandGroup[] = plan.bombs.map(group => ({ label: labels[group.kind], cards: group.cards }));
+  const result: HandGroup[] = [...straightFlushes, ...plan.bombs.map(group => ({ label: labels[group.kind], cards: group.cards }))];
   for (const group of plan.groups) {
     if (usedPairs.has(group)) continue;
     const pair = pairForTriple.get(group);

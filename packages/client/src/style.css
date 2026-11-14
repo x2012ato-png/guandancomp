@@ -271,3 +271,21 @@
 @keyframes six-row-shuffle-right{to{transform:translate(calc(-50% + 18px),-50%) rotate(18deg)}}
 @keyframes six-row-deal{0%{opacity:1;left:85%;top:50%;transform:translate(-50%,-50%) scale(1)} 80%{opacity:1} 100%{opacity:0;left:20%;top:var(--row-top);transform:translate(-50%,-50%) scale(.65)}}
 @media (prefers-reduced-motion:reduce){.in-game.six-row-layout .deck-card,.in-game.six-row-layout .flying-card{animation:none}}
+
+/* Straight flush suggestions remain distinct from selected or tribute cards. */
+.in-game .card.straight-flush-hint{background:#fff1b6;border-color:#d08f27;box-shadow:inset 0 0 0 2px #e3aa39,0 0 10px #ffc54b99}
+.in-game .card.straight-flush-hint.selected{background:#fff8dc}
+.in-game .card.straight-flush-hint .card-corner{background:#ffe39a;border-radius:3px}
+
+.fireworks{position:fixed;inset:0;z-index:30;overflow:hidden;pointer-events:none;animation:fireworks-finish 6s forwards}
+.firework{position:absolute;left:var(--x);top:var(--y);color:var(--color);animation:firework-burst 1.5s var(--delay) ease-out both}
+.firework-0{--x:20%;--y:27%;--color:#ffcf60;--delay:.1s}
+.firework-1{--x:72%;--y:20%;--color:#ff8c89;--delay:.6s}
+.firework-2{--x:48%;--y:42%;--color:#99e8d0;--delay:1.15s}
+.firework-3{--x:82%;--y:52%;--color:#e8adff;--delay:1.8s}
+.firework-4{--x:24%;--y:58%;--color:#ffb36f;--delay:2.4s}
+.firework-5{--x:55%;--y:23%;--color:#fff19f;--delay:3s}
+.firework span{position:absolute;width:5px;height:25px;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor;transform:rotate(calc(var(--ray) * 30deg)) translateY(-62px);transform-origin:center}
+@keyframes firework-burst{0%{opacity:0;transform:scale(.05)} 20%{opacity:1} 65%{opacity:1} 100%{opacity:0;transform:scale(1.2)}}
+@keyframes fireworks-finish{0%,85%{visibility:visible} 100%{visibility:hidden}}
+@media (prefers-reduced-motion:reduce){.firework{animation:none;opacity:0}.fireworks{animation-duration:.01s}}
