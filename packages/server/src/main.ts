@@ -11,9 +11,11 @@ import { SessionStore, type Session } from './sessions.ts';
 import { TokenBucket } from './rateLimit.ts';
 import { parseAction, parseConfig, parseRoomId, parseSeat, sanitizeNickname } from './validate.ts';
 import { PlayedCardsLog } from './playedCardsLog.ts';
+import { botDelay } from './botDelay.ts';
+import { nextHandDeadline, toggleReady } from './nextHand.ts';
 
 type Slot = { playerId: string; nickname: string; bot: boolean; auto: boolean; ready: boolean } | null;
-type Room = { messages: ChatMessage[]; id: string; host: string; members: Set<string>; seats: [Slot, Slot, Slot, Slot]; config: ReturnType<typeof parseConfig>; game: GameState | null; version: number; timer: ReturnType<typeof setTimeout> | null; deadline: number | null; dealingStartedAt: number | null };
+type Room = { messages: ChatMessage[]; id: string; host: string; members: Set<string>; seats: [Slot, Slot, Slot, Slot]; config: ReturnType<typeof parseConfig>; game: GameState | null; version: number; timer: ReturnType<typeof setTimeout> | null; deadline: number | null; nextHandDeadline: number | null; dealingStartedAt: number | null };
 const sessions = new SessionStore();
 const rooms = new Map<string, Room>();
 const ai = createHeuristicPolicy();
@@ -74,10 +76,11 @@ function snapshot(r: Room, s: Session): RoomSnapshot {
     members: [...r.members].map(id => sessions.get(id)).filter((x): x is Session => !!x).map(x => ({ playerId: x.playerId, nickname: x.nickname, connected: sessions.isOnline(x.playerId) })), you: { playerId: s.playerId, seat: seatOf(r, s) } };
 }
 function broadcastRoom(r: Room) { for (const id of r.members) { const s = sessions.get(id); if (s) for (const sid of s.sockets) io.to(sid).emit('room:state', snapshot(r, s)); } }
-function update(r: Room, seat: Seat, events: readonly ScopedEvent[] = []): GameUpdate { return { roomId: r.id, version: r.version, view: toPlayerView(r.game!, seat), events: eventsForSeat(events, seat), deadline: r.deadline, dealing: r.dealingStartedAt === null ? null : { startedAt: r.dealingStartedAt, serverNow: Date.now() } }; }
+function update(r: Room, seat: Seat, events: readonly ScopedEvent[] = []): GameUpdate { const serverNow = Date.now(); return { roomId: r.id, version: r.version, view: toPlayerView(r.game!, seat), events: eventsForSeat(events, seat), deadline: r.deadline, serverNow, dealing: r.dealingStartedAt === null ? null : { startedAt: r.dealingStartedAt, serverNow } }; }
 function broadcastGame(r: Room, events: readonly ScopedEvent[] = []) { for (const id of r.members) { const s = sessions.get(id); if (!s) continue; const seat = seatOf(r, s); if (seat !== null) for (const sid of s.sockets) io.to(sid).emit('game:update', update(r, seat, events)); } }
 function schedule(r: Room) {
   if (r.timer) clearTimeout(r.timer); r.timer = null; r.deadline = null;
+  if (r.game?.phase !== 'handOver') r.nextHandDeadline = null;
   if (!r.game || r.game.phase === 'matchOver') return;
   if (r.dealingStartedAt !== null) {
     const remaining = r.dealingStartedAt + DEAL_DURATION_MS - Date.now();
@@ -88,13 +91,14 @@ function schedule(r: Room) {
     r.dealingStartedAt = null;
   }
   if (r.game.phase === 'handOver') {
-    r.deadline = Date.now() + DEFAULT_TUNING.nextHandDelayMs;
-    r.timer = setTimeout(() => startHand(r), DEFAULT_TUNING.nextHandDelayMs); return;
+    r.nextHandDeadline = nextHandDeadline(r.nextHandDeadline, Date.now(), DEFAULT_TUNING.nextHandDelayMs);
+    r.deadline = r.nextHandDeadline;
+    r.timer = setTimeout(() => startHand(r), Math.max(0, r.deadline - Date.now())); return;
   }
   const actors = pendingActors(r.game); if (!actors.length) return;
   const automated = actors.find(seat => { const slot = r.seats[seat]!; return slot.bot || slot.auto; });
   if (automated === undefined) return;
-  const delay = DEFAULT_TUNING.botDelayMs;
+  const delay = r.seats[automated]?.bot ? botDelay(r.game, r.seats, DEFAULT_TUNING.botDelayMs) : DEFAULT_TUNING.botDelayMs;
   r.deadline = Date.now() + delay;
   r.timer = setTimeout(() => {
     if (!r.game) return;
@@ -114,7 +118,7 @@ io.on('connection', socket => {
   socket.emit('session', { playerId: s.playerId, token: s.token, nickname: s.nickname, roomId: s.roomId });
   const existing = roomOf(s); if (existing) { broadcastRoom(existing); const seat = seatOf(existing,s); if (seat !== null && existing.game) socket.emit('game:update', update(existing,seat)); }
   function guard(ack: AckFn<any>): boolean { if (typeof ack !== 'function') return false; if (!bucket.take()) { fail(ack,'RATE_LIMITED','操作太频繁'); if (bucket.violations >= DEFAULT_TUNING.rate.maxViolations) socket.disconnect(true); return false; } return true; }
-  socket.on('room:create', (p, ack) => { if (!guard(ack)) return; if (s.roomId) return fail(ack,'BAD_REQUEST','请先离开当前房间'); const id = DEFAULT_ROOM_ID; if (rooms.has(id)) return fail(ack,'BAD_REQUEST','房间 666888 已存在，请加入现有房间'); const r: Room = { messages: [], id, host:s.playerId, members:new Set([s.playerId]), seats:[null,null,null,null], config:parseConfig(p?.config), game:null, version:0,timer:null,deadline:null,dealingStartedAt:null }; rooms.set(id,r); s.roomId=id; ok(ack,snapshot(r,s)); broadcastRoom(r); });
+  socket.on('room:create', (p, ack) => { if (!guard(ack)) return; if (s.roomId) return fail(ack,'BAD_REQUEST','请先离开当前房间'); const id = DEFAULT_ROOM_ID; if (rooms.has(id)) return fail(ack,'BAD_REQUEST','房间 666888 已存在，请加入现有房间'); const r: Room = { messages: [], id, host:s.playerId, members:new Set([s.playerId]), seats:[null,null,null,null], config:parseConfig(p?.config), game:null, version:0,timer:null,deadline:null,nextHandDeadline:null,dealingStartedAt:null }; rooms.set(id,r); s.roomId=id; ok(ack,snapshot(r,s)); broadcastRoom(r); });
   socket.on('room:join', (p,ack) => {
     if (!guard(ack)) return;
     if (s.roomId) return fail(ack,'BAD_REQUEST','请先离开当前房间');
@@ -142,7 +146,7 @@ io.on('connection', socket => {
   socket.on('room:addBot',(p,a)=>bot(p,a,true)); socket.on('room:removeBot',(p,a)=>bot(p,a,false));
   socket.on('room:start', ack => { if (!guard(ack)) return; const r=roomOf(s); if (!r) return fail(ack,'NOT_IN_ROOM','不在房间'); if (r.host!==s.playerId) return fail(ack,'NOT_HOST','只有房主可以开始'); if (r.game) return fail(ack,'ALREADY_STARTED','游戏已开始'); if (r.seats.some(x=>!x)) return fail(ack,'BAD_REQUEST','请坐满四个座位'); r.game=createGame(r.config,randomBytes(16).toString('hex')); startHand(r); ok(ack); });
   socket.on('game:action',(p,ack)=>{ if (!guard(ack)) return; const r=roomOf(s); if (!r?.game) return fail(ack,'NOT_STARTED','游戏未开始'); if (r.dealingStartedAt !== null) return fail(ack,'BAD_REQUEST','请等待发牌结束'); const seat=seatOf(r,s); if (seat===null) return fail(ack,'NOT_SEATED','请先入座'); const action=parseAction(p); if (!action) return fail(ack,'BAD_REQUEST','无效动作'); const result=reduce(r.game,{...action,seat}); if (!result.ok) return fail(ack,result.error.code,result.error.message); commit(r,result.state,result.events); ok(ack); });
-  socket.on('game:ready',ack=>{ if (!guard(ack)) return; const r=roomOf(s); if (!r?.game || r.game.phase!=='handOver') return fail(ack,'BAD_REQUEST','当前不能准备'); const seat=seatOf(r,s); if (seat===null) return fail(ack,'NOT_SEATED','请先入座'); r.seats[seat]!.ready=true; ok(ack); if (r.seats.every(x=>x?.ready)) startHand(r); else broadcastRoom(r); });
+  socket.on('game:ready',ack=>{ if (!guard(ack)) return; const r=roomOf(s); if (!r?.game || r.game.phase!=='handOver') return fail(ack,'BAD_REQUEST','当前不能准备'); const seat=seatOf(r,s); if (seat===null) return fail(ack,'NOT_SEATED','请先入座'); toggleReady(r.seats,seat); ok(ack); broadcastRoom(r); });
   socket.on('game:autoplay',(p,ack)=>{ if (!guard(ack)) return; const r=roomOf(s); if (!r?.game || typeof p?.on !== 'boolean') return fail(ack,'BAD_REQUEST','无效请求'); const seat=seatOf(r,s); if (seat===null) return fail(ack,'NOT_SEATED','请先入座'); r.seats[seat]!.auto=p.on; schedule(r); broadcastRoom(r); broadcastGame(r); ok(ack); });
   socket.on('game:sync',ack=>{ if (!guard(ack)) return; const r=roomOf(s); const seat=r && seatOf(r,s); ok(ack,r?.game && seat !== null && seat !== undefined ? update(r,seat) : null); });
   socket.on('chat:history', ack => { if (!guard(ack)) return; const r=roomOf(s); if (!r) return fail(ack,'NOT_IN_ROOM','不在房间'); ok(ack,r.messages); });

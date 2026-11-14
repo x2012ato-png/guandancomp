@@ -12,6 +12,11 @@
 .card.eligible .card-corner{background:#f4dfa0;border-radius:3px}
 .card-corner{display:inline-flex;flex-direction:column;align-items:center;vertical-align:top;min-width:15px;line-height:1;font-size:14px}
 .card-rank,.card-suit,.card-wild{display:block}
+.card-corner.suit-C{color:#173c70}
+.card-corner.suit-D{color:#d46a16}
+.ready-button[aria-pressed="true"]{background:#8db99c;border-color:#8db99c;color:#102c27}
+.ready-button[aria-pressed="true"]:hover{background:#a8cbb3}
+.ready-countdown{font-variant-numeric:tabular-nums;white-space:nowrap}
 .card-suit{margin-top:2px}
 .card-wild{margin-top:3px;color:#a47414;font-size:10px}
 .played{--card-width:44px;margin:0 auto;min-height:0}

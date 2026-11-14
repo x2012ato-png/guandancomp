@@ -108,6 +108,8 @@ export interface GameUpdate {
   readonly events: readonly GameEvent[];
   /** 当前行动截止时间（毫秒时间戳），无限时为 null */
   readonly deadline: number | null;
+  /** 发送更新时的服务端时间，用于显示与服务端同步的倒计时。 */
+  readonly serverNow: number;
   /** 开局动画的服务端时间，重连时用于恢复进度。 */
   readonly dealing: { readonly startedAt: number; readonly serverNow: number } | null;
 }
