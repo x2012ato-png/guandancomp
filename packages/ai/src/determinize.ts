@@ -64,6 +64,8 @@ export const randomDeterminizer: Determinizer = {
       hands: hands as unknown as GameState['hands'],
       turn: view.turn,
       trick: view.trick,
+      previousTrick: view.previousTrick ?? null,
+      publicHistory: [...(view.publicHistory ?? [])],
       finishOrder: view.finishOrder,
       playedCards: view.playedCards,
       tribute: view.tribute

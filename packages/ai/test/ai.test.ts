@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_RULES,
+  cardPower,
   checkInvariants,
   createGame,
   legalActions,
@@ -14,7 +15,7 @@ import {
   type GameState,
   type Seat,
 } from '@guandan/engine';
-import { choosePlay, createHeuristicPolicy, decisionToAction, planHand, randomDeterminizer, type AIPolicy } from '../src/index.ts';
+import { choosePlay, createAdvancedPolicy, createBeginnerPolicy, createHeuristicPolicy, decisionToAction, planHand, randomDeterminizer, type AIPolicy } from '../src/index.ts';
 import { cards, playingState } from '../../engine/test/helpers.ts';
 
 const ai = createHeuristicPolicy();
@@ -69,6 +70,53 @@ describe('启发式决策', () => {
     const r = ai.decide(rv);
     expect(r?.type).toBe('returnTribute');
     void s0;
+  });
+});
+
+describe('高级策略', () => {
+  const advanced = createAdvancedPolicy();
+
+  it('保留初级策略并在无需额外残局判断时沿用其决策', () => {
+    const state = playingState([cards('S3 S4 S5 S6 S7 S9 D9 SQ DK'), cards('SA'), cards('SK'), cards('SJ')]);
+    const view = toPlayerView(state, 0);
+    expect(createBeginnerPolicy().id).toBe('beginner');
+    expect(createBeginnerPolicy().decide(view)).toEqual(createHeuristicPolicy().decide(view));
+    expect(advanced.decide(view)).toEqual(createBeginnerPolicy().decide(view));
+  });
+
+  it('小手牌拆分中考虑逢人配，优先出能留下单张的顺子', () => {
+    const state = playingState([cards('S3 D4 C5 S6 H2 BJ'), cards('S9 S10 SJ SQ SK SA'), cards('S8 C8 D8'), cards('D9 D10 DJ DQ DK DA')]);
+    const decision = advanced.decide(toPlayerView(state, 0));
+    expect(decision?.type).toBe('play');
+    if (decision?.type !== 'play') throw new Error('Expected a play');
+    expect(decision.play.combo.type).toBe('straight');
+    expect(decision.play.wildAssignments).toHaveLength(1);
+  });
+
+  it('下一家只剩一张时可接管队友单张，下一家已经不要时继续让牌', () => {
+    const state = playingState([cards('BJ S3 D4'), cards('S9'), cards('S5 D6'), cards('S7 S8')], { turn: 2 });
+    const played = reduce(state, { type: 'play', seat: 2, cards: cards('S5') });
+    if (!played.ok) throw new Error('Setup play rejected');
+    const passed = reduce(played.state, { type: 'pass', seat: 3 });
+    if (!passed.ok) throw new Error('Setup pass rejected');
+    const view = toPlayerView(passed.state, 0);
+    expect(createBeginnerPolicy().decide(view)).toEqual({ type: 'pass' });
+    const decision = advanced.decide(view);
+    expect(decision?.type === 'play' && decision.play.combo.key).toBe(17);
+    expect(advanced.decide({ ...view, trick: { ...view.trick!, passed: [1, 3] } })).toEqual({ type: 'pass' });
+    expect(advanced.decide({ ...view, handCounts: [3, 1, 0, 2] })).toEqual({ type: 'pass' });
+  });
+
+  it('对手剩一张时利用公开出牌判断单张是否仍可被压', () => {
+    const hand = cards('S3 SK D4');
+    const state = playingState([hand, cards('S9'), cards('S8 C8 D8'), cards('D9 D10 DJ')]);
+    const view = toPlayerView(state, 0);
+    const unknown = advanced.decide(view);
+    const playedCards = Array.from({ length: 108 }, (_, id) => id)
+      .filter(id => !hand.includes(id) && cardPower(id, 2) > 13);
+    const known = advanced.decide({ ...view, playedCards });
+    expect(unknown?.type === 'play' && unknown.play.combo.key).toBe(3);
+    expect(known?.type === 'play' && known.play.combo.key).toBe(13);
   });
 });
 
@@ -137,6 +185,13 @@ describe('整场模拟', () => {
       total += r.wins[0]! + r.wins[1]!;
     }
     expect(heuristicWins / total).toBeGreaterThanOrEqual(0.7);
+  }, 60000);
+
+  it('高级与初级对局的动作合法且能完成对局', () => {
+    const advanced = createAdvancedPolicy();
+    const r = playMatch([advanced, ai, advanced, ai], 'advanced-match', 4);
+    expect(r.hands).toBeGreaterThanOrEqual(3);
+    expect(r.ms / r.decisions).toBeLessThan(100);
   }, 60000);
 });
 

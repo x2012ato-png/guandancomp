@@ -42,6 +42,58 @@ afterEach(async () => {
   rmSync(logDirectory, { recursive: true, force: true });
 });
 describe('room service', () => {
+  it('adds both AI types and sends coach guidance only to its human partner on their turn', async () => {
+    const host = await connect(undefined, 'Coached player');
+    const opponent = await connect(undefined, 'Opponent');
+    const created = await host.socket.emitWithAck('room:create', { config: { firstLeader: 0 } });
+    if (!created.ok) throw new Error('Room creation failed');
+    expect((await opponent.socket.emitWithAck('room:join', {roomId: created.data.roomId})).ok).toBe(true);
+    expect((await host.socket.emitWithAck('room:sit', {seat: 0})).ok).toBe(true);
+    expect((await opponent.socket.emitWithAck('room:sit', {seat: 1})).ok).toBe(true);
+    expect((await host.socket.emitWithAck('room:addBot', {seat: 2, botKind: 'coach'})).ok).toBe(true);
+    const roomUpdate = new Promise<Parameters<ServerToClientEvents['room:state']>[0]>(resolve => {
+      const onRoom: ServerToClientEvents['room:state'] = room => {
+        if (room.seats[3].botKind === 'beginner') { host.socket.off('room:state', onRoom); resolve(room); }
+      };
+      host.socket.on('room:state', onRoom);
+    });
+    expect((await host.socket.emitWithAck('room:addBot', {seat: 3, botKind: 'beginner'})).ok).toBe(true);
+    const room = await roomUpdate;
+    expect(room.seats[2]).toMatchObject({kind: 'bot', botKind: 'coach', nickname: 'AI教练 3'});
+    expect(room.seats[3]).toMatchObject({kind: 'bot', botKind: 'beginner', nickname: 'AI 4'});
+    const dealt = waitForDeal(host.socket);
+    const guidance = new Promise<Parameters<ServerToClientEvents['coach:advice']>[0]>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Coach analysis did not finish')), DEAL_DURATION_MS + 5000);
+      host.socket.once('coach:advice', advice => { clearTimeout(timeout); resolve(advice); });
+    });
+    let leakedAdvice = false;
+    opponent.socket.on('coach:advice', () => { leakedAdvice = true; });
+    expect((await host.socket.emitWithAck('room:start')).ok).toBe(true);
+    const duringDeal = await host.socket.emitWithAck('game:sync');
+    expect(duringDeal.ok && duringDeal.data?.coachAdvice).toBeNull();
+    const update = await dealt;
+    expect(update.view.myDuty).toBe('play');
+    expect(update.coachAdvice?.decision.type).toBe('play');
+    expect(update.coachAdvice?.reasons.length).toBeGreaterThanOrEqual(2);
+    const improved = await guidance;
+    expect(improved.version).toBe(update.version);
+    expect(improved.advice.pending).toBe(false);
+    if (improved.advice.decision.type === 'play') expect(improved.advice.decision.play.cards.every(card => update.view.myHand.includes(card))).toBe(true);
+    expect(improved.advice.reasons.some(reason => reason.includes('模拟比较了'))).toBe(true);
+    expect(leakedAdvice).toBe(false);
+    const other = await opponent.socket.emitWithAck('game:sync');
+    expect(other.ok && other.data?.coachAdvice).toBeNull();
+    host.socket.disconnect();
+    const restored = await connect(host.session.token);
+    const synced = await restored.socket.emitWithAck('game:sync');
+    if (!synced.ok || !synced.data || synced.data.coachAdvice?.decision.type !== 'play') throw new Error('Missing restored advice');
+    expect(synced.data.coachAdvice).toEqual(improved.advice);
+    const play = synced.data.coachAdvice.decision.play;
+    expect((await restored.socket.emitWithAck('game:action', {type:'play', cards:play.cards, combo:{type:play.combo.type,key:play.combo.key,...(play.combo.suit ? {suit:play.combo.suit} : {})}, wildAssignments:play.wildAssignments})).ok).toBe(true);
+    const after = await restored.socket.emitWithAck('game:sync');
+    expect(after.ok && after.data?.coachAdvice).toBeNull();
+  }, DEAL_DURATION_MS + 10000);
+
   it('serves the latest log as JSON and handles missing files, read errors, and CORS', async () => {
     const url = `http://127.0.0.1:${port}/api/played-cards-log`;
     const missing = await fetch(url, { headers: { Origin: 'https://coach.example' } });

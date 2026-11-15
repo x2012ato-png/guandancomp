@@ -5,6 +5,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "test": "vitest run",
+    "eval:ai": "node packages/ai/bench/evaluate.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev:server": "npm -w @guandan/server run dev",
     "dev:client": "npm -w @guandan/client run dev",

@@ -50,6 +50,8 @@ export function createGame(config: RulesConfig = DEFAULT_RULES, seed: number | s
     hands: [[], [], [], []],
     turn: null,
     trick: null,
+    previousTrick: null,
+    publicHistory: [],
     finishOrder: [],
     playedCards: [],
     tribute: null,
@@ -164,6 +166,8 @@ function startHand(state: GameState): ReduceResult {
     phase: 'playing',
     turn: null,
     trick: null,
+    previousTrick: null,
+    publicHistory: [],
     finishOrder: [],
     playedCards: [],
     tribute: null,
@@ -281,6 +285,7 @@ function play(state: GameState, action: Extract<GameAction, { type: 'play' }>): 
     ...state,
     hands: setHand(state.hands, seat, newHand),
     playedCards: [...state.playedCards, ...cards],
+    publicHistory: [...(state.publicHistory ?? []), { seat, play: p }],
     trick: {
       ...state.trick,
       lastPlay: { seat, play: p },
@@ -314,6 +319,7 @@ function pass(state: GameState, seat: Seat): ReduceResult {
   if (!trick.lastPlay) return err('CANNOT_PASS_ON_LEAD', '首出不能不要');
   const passed = [...trick.passed, seat];
   const history = [...trick.history, { seat, play: null }];
+  const publicHistory = [...(state.publicHistory ?? []), { seat, play: null }];
   const events: ScopedEvent[] = [pub({ type: 'passed', seat })];
   const last = trick.lastPlay.seat;
   const others = SEATS.filter((s) => s !== last && isActive(state, s));
@@ -327,13 +333,13 @@ function pass(state: GameState, seat: Seat): ReduceResult {
     events.push(pub({ type: 'trickWon', seat: last, leader, jiefeng }));
     return {
       ok: true,
-      state: { ...state, turn: leader, trick: { leader, lastPlay: null, passed: [], history: [] } },
+      state: { ...state, turn: leader, publicHistory, previousTrick: { ...trick, passed, history }, trick: { leader, lastPlay: null, passed: [], history: [] } },
       events,
     };
   }
   return {
     ok: true,
-    state: { ...state, turn: nextActive(state, seat), trick: { ...trick, passed, history } },
+    state: { ...state, turn: nextActive(state, seat), publicHistory, trick: { ...trick, passed, history } },
     events,
   };
 }

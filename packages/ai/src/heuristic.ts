@@ -8,6 +8,7 @@
  */
 import {
   cardPower,
+  BIG_JOKER,
   generatePlays,
   isBomb,
   bombTier,
@@ -23,6 +24,7 @@ import {
   type Seat,
 } from '@guandan/engine';
 import { planHand, type HandPlan } from './handPlan.ts';
+import { tacticalAdjustments, tacticalContext, type TacticalContext } from './tactics.ts';
 import type { AIDecision, AIPolicy, DecisionContext } from './types.ts';
 
 export interface HeuristicOptions {
@@ -30,6 +32,10 @@ export interface HeuristicOptions {
   readonly dangerCount: number;
   /** 正常跟牌可接受的最大代价 */
   readonly followCostLimit: number;
+  /** 高级策略额外保护同花顺并衡量抢到出牌权的收益。 */
+  readonly advanced?: boolean;
+  /** 评测时可关闭口诀偏好，保留原高级策略作对照。 */
+  readonly tactical?: boolean;
 }
 
 export const DEFAULT_HEURISTIC: HeuristicOptions = { dangerCount: 6, followCostLimit: 14 };
@@ -39,6 +45,16 @@ const COMPOSITE = new Set<Combo['type']>(['straight', 'tube', 'plate', 'fullHous
 interface Scored {
   readonly play: Play;
   readonly cost: number;
+  readonly details?: readonly string[];
+}
+
+export interface HeuristicTrace {
+  readonly mode: 'lead' | 'follow';
+  readonly scores: readonly Scored[];
+  readonly limit?: number;
+  readonly danger?: boolean;
+  readonly nearlyDone?: boolean;
+  readonly partnerCaution?: boolean;
 }
 
 function strength(c: Combo): number {
@@ -81,6 +97,11 @@ export function createHeuristicPolicy(options: Partial<HeuristicOptions> = {}): 
   };
 }
 
+/** 初级策略：保留原有启发式行为和兼容接口。 */
+export function createBeginnerPolicy(options: Partial<HeuristicOptions> = {}): AIPolicy {
+  return { ...createHeuristicPolicy(options), id: 'beginner' };
+}
+
 export function chooseTribute(view: PlayerView): CardId {
   const options = validTributeCards(view.myHand, view.level);
   return minBy(options, (id) => planHand(without(view.myHand, [id]), view.level).turns);
@@ -111,12 +132,31 @@ function opponentsOf(seat: Seat): Seat[] {
   return [nextSeat(seat), nextSeat(partnerOf(seat))];
 }
 
-export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HEURISTIC): AIDecision {
+/** 添加保留整副同花顺的同牌型替代方案，不改变引擎的代表牌生成契约。 */
+export function generateTacticalPlays(view: PlayerView, toBeat?: Combo | null): { candidates: Play[]; flushes: Play[] } {
+  const hand = view.myHand;
+  let candidates = generatePlays(hand, view.level, view.config, toBeat);
+  const flushes = (toBeat ? generatePlays(hand, view.level, view.config) : candidates).filter(play => play.combo.type === 'straightFlush');
+  if (flushes.length) {
+    // 为同一牌型补充不使用同花顺牌的代表方案，避免固定花色选牌拆炸。
+    const signatures = new Set(candidates.map(p => `${p.combo.type}:${p.combo.key}:${p.combo.suit ?? ''}:${[...p.cards].sort((a, b) => a - b)}`));
+    for (const flush of flushes) {
+      for (const play of generatePlays(without(hand, flush.cards), view.level, view.config, toBeat)) {
+        const key = `${play.combo.type}:${play.combo.key}:${play.combo.suit ?? ''}:${[...play.cards].sort((a, b) => a - b)}`;
+        if (!signatures.has(key)) { signatures.add(key); candidates.push(play); }
+      }
+    }
+  }
+  return { candidates, flushes };
+}
+
+export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HEURISTIC, report?: (trace: HeuristicTrace) => void): AIDecision {
   const hand = view.myHand;
   const me = view.seat;
   const lp = view.trick?.lastPlay ?? null;
   const toBeat = lp?.play.combo ?? null;
-  const candidates = generatePlays(hand, view.level, view.config, toBeat);
+  const { candidates, flushes } = opts.advanced ? generateTacticalPlays(view, toBeat)
+    : { candidates: generatePlays(hand, view.level, view.config, toBeat), flushes: [] };
 
   // 能一手出完就直接出
   const finishing = candidates.find((p) => p.cards.length === hand.length);
@@ -127,11 +167,20 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
   const partner = partnerOf(me);
   const partnerCount = view.handCounts[partner]!;
   const before = planHand(hand, view.level);
+  const tactics = opts.advanced && opts.tactical !== false ? tacticalContext(view) : undefined;
 
-  if (!lp) return { type: 'play', play: chooseLead(view, candidates, before, minOpp, partnerCount) };
+  if (!lp) return { type: 'play', play: chooseLead(view, candidates, before, minOpp, partnerCount, report, flushes, tactics) };
 
   // 不压队友
-  if (teamOf(lp.seat) === teamOf(me)) return { type: 'pass' };
+  if (teamOf(lp.seat) === teamOf(me)) {
+    // 己方牌力强、队友手牌尚多且对手接近走完时，考虑用可控单张接管。
+    if (tactics?.mode === 'race' && lp.play.combo.type === 'single' && partnerCount >= 4 && minOpp <= 6) {
+      const cover = candidates.filter(play => play.combo.type === 'single' && play.combo.key === BIG_JOKER)
+        .find(play => structuralCost(hand, play, before, view).frag <= 1);
+      if (cover) return { type: 'play', play: cover };
+    }
+    return { type: 'pass' };
+  }
 
   const playerCount = view.handCounts[lp.seat]!;
   const danger = playerCount <= opts.dangerCount || minOpp <= Math.ceil(opts.dangerCount / 2);
@@ -140,20 +189,36 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
   const bombs: Scored[] = [];
   for (const play of candidates) {
     const s = structuralCost(hand, play, before, view);
+    const tactical = tactics ? tacticalAdjustments(view, play, tactics) : [];
+    const tacticalCost = tactical.reduce((sum, item) => sum + item.cost, 0);
+    const tacticalDetails = report ? tactical.map(item => `${item.text} ${item.cost > 0 ? '+' : ''}${item.cost}`) : [];
+    const remaining = flushes.length ? new Set(without(hand, play.cards)) : null;
+    const losesFlush = !!remaining && play.combo.type !== 'straightFlush' && !flushes.some(flush => flush.cards.every(card => remaining.has(card)));
+    // 同花顺未被普通理牌识别时仍保护；已计入拆炸损失时不重复惩罚。
+    const flushCost = losesFlush && s.bombLoss === 0 ? 40 : 0;
     if (isBomb(play.combo)) {
-      bombs.push({ play, cost: bombTier(play.combo) * 10 + strength(play.combo) * 5 + s.bombLoss * 40 + s.wildsUsed * 6 });
+      bombs.push({ play, cost: bombTier(play.combo) * 10 + strength(play.combo) * 5 + s.bombLoss * 40 + s.wildsUsed * 6 + flushCost + tacticalCost,
+        details: report ? [`炸弹等级 ${bombTier(play.combo)} × 10`, `牌力 ${strength(play.combo).toFixed(3)} × 5`, `额外拆炸 ${s.bombLoss} × 40`, `逢人配 ${s.wildsUsed} × 6`, ...(flushCost ? [`拆掉同花顺 +${flushCost}`] : []), ...tacticalDetails] : undefined });
     } else {
-      nonBomb.push({ play, cost: s.frag * 10 + strength(play.combo) * 6 + s.wildsUsed * 8 + s.bombLoss * 40 });
+      const controlBonus = opts.advanced && play.combo.type === 'single' && play.combo.key === BIG_JOKER && hand.length >= 10 ? 5 : 0;
+      nonBomb.push({ play, cost: s.frag * 10 + strength(play.combo) * 6 + s.wildsUsed * 8 + s.bombLoss * 40 + flushCost - controlBonus + tacticalCost,
+        details: report ? [`余牌结构变化 ${s.frag} × 10`, `牌力 ${strength(play.combo).toFixed(3)} × 6`, `逢人配 ${s.wildsUsed} × 8`, `拆炸 ${s.bombLoss} × 40`, ...(flushCost ? [`拆掉同花顺 +${flushCost}`] : []), ...(controlBonus ? [`大王取得单张控制机会 −${controlBonus}`] : []), ...tacticalDetails] : undefined });
     }
   }
   nonBomb.sort((a, b) => a.cost - b.cost);
   const best = nonBomb[0];
-  const limit = danger ? 80 : opts.followCostLimit;
+  const partnerCaution = !!tactics && tactics.mode === 'support' && !danger && partnerCount > 0 && !view.trick?.passed.includes(partner);
+  const limit = danger ? 80 : partnerCaution ? Math.min(opts.followCostLimit, 6) : opts.followCostLimit;
+  report?.({ mode: 'follow', scores: [...nonBomb, ...bombs], limit, danger, nearlyDone: before.turns <= 2, partnerCaution });
+  const bestBomb = bombs.reduce<Scored | undefined>((selected, item) => !selected || item.cost < selected.cost ? item : selected, undefined);
+  const contest = !!tactics && (tactics.firstOpponentStraight || playerCount === 5);
+  if (contest && bestBomb && playerCount !== 4 && bestBomb.cost <= (best?.cost ?? limit) + 6) return { type: 'play', play: bestBomb.play };
   if (best && best.cost <= limit) return { type: 'play', play: best.play };
 
   if (bombs.length > 0) {
     const nearlyDone = before.turns <= 2;
-    const wantBomb = danger || nearlyDone;
+    const conserveFour = !!tactics && playerCount === 4 && !nearlyDone && minOpp > 2;
+    const wantBomb = (danger || nearlyDone) && !conserveFour;
     if (wantBomb) {
       bombs.sort((a, b) => a.cost - b.cost);
       return { type: 'play', play: bombs[0]!.play };
@@ -162,26 +227,36 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
   return { type: 'pass' };
 }
 
-function chooseLead(view: PlayerView, candidates: Play[], before: HandPlan, minOpp: number, partnerCount: number): Play {
+function chooseLead(view: PlayerView, candidates: Play[], before: HandPlan, minOpp: number, partnerCount: number, report?: (trace: HeuristicTrace) => void, flushes: readonly Play[] = [], tactics?: TacticalContext): Play {
   const hand = view.myHand;
   const scored: Scored[] = [];
   for (const play of candidates) {
     const c = play.combo;
     const s = structuralCost(hand, play, before, view);
     let cost = s.frag * 10 + strength(c) * 4 + s.wildsUsed * 8 + s.bombLoss * 30;
-    if (isBomb(c)) cost += 50;
-    if (COMPOSITE.has(c.type)) cost -= 3;
+    const details = report ? [`余牌结构变化 ${s.frag} × 10`, `牌力 ${strength(c).toFixed(3)} × 4`, `逢人配 ${s.wildsUsed} × 8`, `拆炸 ${s.bombLoss} × 30`, `出牌 ${play.cards.length} 张 × −0.3`] : undefined;
+    for (const item of tactics ? tacticalAdjustments(view, play, tactics) : []) { cost += item.cost; details?.push(`${item.text} ${item.cost > 0 ? '+' : ''}${item.cost}`); }
+    if (flushes.length && c.type !== 'straightFlush' && s.bombLoss === 0) {
+      const remaining = new Set(without(hand, play.cards));
+      if (!flushes.some(flush => flush.cards.every(card => remaining.has(card)))) { cost += 30; details?.push('拆掉同花顺 +30'); }
+    }
+    if (isBomb(c)) { cost += 50; details?.push('出炸弹 +50'); }
+    if (COMPOSITE.has(c.type)) { cost -= 3; details?.push('复合牌型 −3'); }
     cost -= play.cards.length * 0.3;
     // 对手残局：避免送出对手能接的张数
-    if (minOpp === 1 && c.type === 'single') cost += c.key >= 16 ? 0 : 25;
-    if (minOpp === 2 && c.type === 'pair') cost += 12;
+    if (minOpp === 1 && c.type === 'single' && c.key < 16) { cost += 25; details?.push('对手剩 1 张，出非王单张 +25'); }
+    if (minOpp === 2 && c.type === 'pair') { cost += 12; details?.push('对手剩 2 张，出对子 +12'); }
     // 队友只剩 1–2 张且对手不危险：递小牌
     if (partnerCount > 0 && partnerCount <= 2 && minOpp > 3) {
-      if (partnerCount === 1 && c.type === 'single') cost -= 8 * (1 - strength(c));
-      if (partnerCount === 2 && c.type === 'pair') cost -= 8 * (1 - strength(c));
+      if ((partnerCount === 1 && c.type === 'single') || (partnerCount === 2 && c.type === 'pair')) {
+        const discount = 8 * (1 - strength(c));
+        cost -= discount;
+        details?.push(`队友剩 ${partnerCount} 张，递牌优惠 −${discount.toFixed(3)}`);
+      }
     }
-    scored.push({ play, cost });
+    scored.push({ play, cost, details });
   }
   scored.sort((a, b) => a.cost - b.cost);
+  report?.({ mode: 'lead', scores: scored });
   return scored[0]!.play;
 }

@@ -159,6 +159,10 @@ export interface GameState {
   readonly hands: readonly [readonly CardId[], readonly CardId[], readonly CardId[], readonly CardId[]];
   readonly turn: Seat | null;
   readonly trick: TrickState | null;
+  /** 上一轮的公开出牌和不要记录。 */
+  readonly previousTrick?: TrickState | null;
+  /** 本局全部公开出牌和不要，用于战术推断。 */
+  readonly publicHistory?: readonly TrickEntry[];
   readonly finishOrder: readonly Seat[];
   /** 本局已打出的牌（公开） */
   readonly playedCards: readonly CardId[];
@@ -247,6 +251,8 @@ export interface PlayerView {
   readonly handCounts: readonly [number, number, number, number];
   readonly turn: Seat | null;
   readonly trick: TrickState | null;
+  readonly previousTrick?: TrickState | null;
+  readonly publicHistory?: readonly TrickEntry[];
   readonly finishOrder: readonly Seat[];
   readonly playedCards: readonly CardId[];
   readonly tribute: TributeView | null;

@@ -11,6 +11,7 @@ import type {
   ComboSignature,
   GameEvent,
   PlayerView,
+  Play,
   RulesConfig,
   Seat,
   WildAssignment,
@@ -52,10 +53,12 @@ export interface SessionInfo {
 }
 
 export type SeatKind = 'empty' | 'human' | 'bot';
+export type BotKind = 'beginner' | 'coach';
 
 export interface SeatInfo {
   readonly seat: Seat;
   readonly kind: SeatKind;
+  readonly botKind: BotKind | null;
   readonly nickname: string | null;
   readonly playerId: string | null;
   readonly connected: boolean;
@@ -104,6 +107,8 @@ export interface GameUpdate {
   readonly roomId: string;
   readonly version: number;
   readonly view: PlayerView;
+  /** 仅发送给有教练对家的当前真人玩家。 */
+  readonly coachAdvice: CoachAdvice | null;
   /** 自上个版本以来本座位可见的事件（全量同步时为空） */
   readonly events: readonly GameEvent[];
   /** 当前行动截止时间（毫秒时间戳），无限时为 null */
@@ -112,6 +117,13 @@ export interface GameUpdate {
   readonly serverNow: number;
   /** 开局动画的服务端时间，重连时用于恢复进度。 */
   readonly dealing: { readonly startedAt: number; readonly serverNow: number } | null;
+}
+
+export interface CoachAdvice {
+  readonly decision: { readonly type: 'pass' } | { readonly type: 'play'; readonly play: Play };
+  readonly reasons: readonly string[];
+  /** 后台仍在比较其他候选行动。 */
+  readonly pending?: boolean;
 }
 
 export const DEAL_ANIMATION = { shuffleMs: 2000, cardMs: 910, cardsPerPlayer: 27 } as const;
@@ -123,7 +135,7 @@ export interface ClientToServerEvents {
   'room:leave': (ack: AckFn) => void;
   'room:sit': (p: { seat: Seat }, ack: AckFn) => void;
   'room:stand': (ack: AckFn) => void;
-  'room:addBot': (p: { seat: Seat }, ack: AckFn) => void;
+  'room:addBot': (p: { seat: Seat; botKind?: BotKind }, ack: AckFn) => void;
   'room:removeBot': (p: { seat: Seat }, ack: AckFn) => void;
   'room:start': (ack: AckFn) => void;
   'game:action': (p: ClientGameAction, ack: AckFn) => void;
@@ -140,6 +152,7 @@ export interface ServerToClientEvents {
   'room:state': (s: RoomSnapshot) => void;
   'room:left': () => void;
   'game:update': (u: GameUpdate) => void;
+  'coach:advice': (u: { readonly roomId: string; readonly version: number; readonly advice: CoachAdvice }) => void;
   'chat:message': (message: ChatMessage) => void;
   notice: (n: { level: 'info' | 'warn'; message: string }) => void;
 }

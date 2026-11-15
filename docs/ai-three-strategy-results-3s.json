@@ -1,0 +1,119 @@
+{
+  "finishedAt": "2026-11-15T08:30:34.274Z",
+  "seeds": 2,
+  "handsPerMatch": 4,
+  "budgetMs": 3000,
+  "elapsedSeconds": 116.640772612,
+  "matchups": [
+    {
+      "a": "base",
+      "b": "endgame",
+      "hands": 16,
+      "wins": {
+        "base": 8,
+        "endgame": 8,
+        "all": 0
+      },
+      "double": {
+        "base": 3,
+        "endgame": 3,
+        "all": 0
+      },
+      "upgrade": {
+        "base": 14,
+        "endgame": 14,
+        "all": 0
+      },
+      "matches": 4
+    },
+    {
+      "a": "base",
+      "b": "all",
+      "hands": 16,
+      "wins": {
+        "base": 6,
+        "endgame": 0,
+        "all": 10
+      },
+      "double": {
+        "base": 2,
+        "endgame": 0,
+        "all": 2
+      },
+      "upgrade": {
+        "base": 10,
+        "endgame": 0,
+        "all": 17
+      },
+      "matches": 4
+    },
+    {
+      "a": "endgame",
+      "b": "all",
+      "hands": 16,
+      "wins": {
+        "base": 0,
+        "endgame": 5,
+        "all": 11
+      },
+      "double": {
+        "base": 0,
+        "endgame": 2,
+        "all": 3
+      },
+      "upgrade": {
+        "base": 0,
+        "endgame": 9,
+        "all": 19
+      },
+      "matches": 4
+    }
+  ],
+  "strategies": {
+    "base": {
+      "hands": 32,
+      "wins": 14,
+      "double": 5,
+      "upgrade": 24,
+      "decisions": 1417,
+      "searched": 0,
+      "changed": 0,
+      "latency": {
+        "meanMs": 2.5546982625264087,
+        "p95Ms": 8.29833299999973,
+        "p99Ms": 21.35614599999917,
+        "maxMs": 56.27093700000006
+      }
+    },
+    "endgame": {
+      "hands": 32,
+      "wins": 13,
+      "double": 5,
+      "upgrade": 23,
+      "decisions": 1417,
+      "searched": 89,
+      "changed": 5,
+      "latency": {
+        "meanMs": 3.5366476478476874,
+        "p95Ms": 14.907967999999528,
+        "p99Ms": 36.53130200000305,
+        "maxMs": 110.97984400000132
+      }
+    },
+    "all": {
+      "hands": 32,
+      "wins": 21,
+      "double": 5,
+      "upgrade": 36,
+      "decisions": 1443,
+      "searched": 1038,
+      "changed": 41,
+      "latency": {
+        "meanMs": 74.73752840748436,
+        "p95Ms": 226.05635400000028,
+        "p99Ms": 349.2395829999987,
+        "maxMs": 442.69671800000106
+      }
+    }
+  }
+}

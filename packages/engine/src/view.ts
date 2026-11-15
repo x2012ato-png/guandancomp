@@ -44,6 +44,8 @@ export function toPlayerView(state: GameState, seat: Seat): PlayerView {
     handCounts: state.hands.map((h) => h.length) as unknown as [number, number, number, number],
     turn: state.turn,
     trick: state.trick,
+    previousTrick: state.previousTrick ?? null,
+    publicHistory: [...(state.publicHistory ?? [])],
     finishOrder: [...state.finishOrder],
     playedCards: [...state.playedCards],
     tribute,
