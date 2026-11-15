@@ -233,9 +233,11 @@
   .in-game .portrait-layout-toggle,.in-room .portrait-layout-toggle{display:inline-block}
   .portrait-layout-toggle[aria-pressed="true"]{background:#d5b36d;color:#172c23;border-color:#d5b36d}
   .room-actions{flex-wrap:wrap;max-width:100%}
-  .in-game.six-row-layout .table{display:grid;grid-template-columns:minmax(86px,30%) minmax(0,1fr);grid-template-rows:auto repeat(4,minmax(56px,1fr));gap:0 8px;height:auto;min-height:0;padding:6px 10px;border-radius:18px}
+  main.in-game.six-row-layout{--six-row-page-inset:12px;--six-row-table-border:7px;--six-row-table-inset:10px;padding-left:var(--six-row-page-inset)}
+  .in-game.six-row-layout .table{display:grid;grid-template-columns:minmax(86px,30%) minmax(0,1fr);grid-template-rows:auto repeat(4,minmax(56px,1fr));gap:0 8px;height:auto;min-height:0;padding:6px var(--six-row-table-inset);border-width:var(--six-row-table-border);border-radius:18px}
   .in-game.six-row-layout .center,.in-game.six-row-layout .deal-animation + .center{position:static;grid-column:1 / -1;grid-row:1;transform:none;width:auto;text-align:left;padding:0 2px 4px}
-  .in-game.six-row-layout .seat{position:static;grid-column:1;transform:none;max-width:none;min-width:0;padding:4px 2px;border-top:1px solid #ffffff25}
+  .in-game.six-row-layout .seat{position:relative;inset:auto;grid-column:1;transform:none;max-width:none;min-width:0;padding:4px 2px;border-top:1px solid #ffffff25}
+  .in-game.six-row-layout .seat-active::before{content:"";position:absolute;left:-6px;top:8px;bottom:8px;width:3px;border-radius:3px;background:#f4d27a;box-shadow:0 0 8px #f4d27a99}
   /* Keep teammates two rows apart, with each play beside its player. */
   .in-game.six-row-layout .seat0,.in-game.six-row-layout .seat-play0{grid-row:4}
   .in-game.six-row-layout .seat1,.in-game.six-row-layout .seat-play1{grid-row:5}
