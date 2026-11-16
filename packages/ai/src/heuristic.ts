@@ -24,6 +24,8 @@ import {
   type Seat,
 } from '@guandan/engine';
 import { planHand, type HandPlan } from './handPlan.ts';
+import { fullHousePairCost } from './fullHouseCost.ts';
+import { earlyWildCost } from './wildCost.ts';
 import { tacticalAdjustments, tacticalContext, type TacticalContext } from './tactics.ts';
 import type { AIDecision, AIPolicy, DecisionContext } from './types.ts';
 
@@ -196,13 +198,15 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
     const losesFlush = !!remaining && play.combo.type !== 'straightFlush' && !flushes.some(flush => flush.cards.every(card => remaining.has(card)));
     // 同花顺未被普通理牌识别时仍保护；已计入拆炸损失时不重复惩罚。
     const flushCost = losesFlush && s.bombLoss === 0 ? 40 : 0;
+    const pairCost = fullHousePairCost(play, view.level);
+    const wildCost = earlyWildCost(view, play);
     if (isBomb(play.combo)) {
       bombs.push({ play, cost: bombTier(play.combo) * 10 + strength(play.combo) * 5 + s.bombLoss * 40 + s.wildsUsed * 6 + flushCost + tacticalCost,
         details: report ? [`炸弹等级 ${bombTier(play.combo)} × 10`, `牌力 ${strength(play.combo).toFixed(3)} × 5`, `额外拆炸 ${s.bombLoss} × 40`, `逢人配 ${s.wildsUsed} × 6`, ...(flushCost ? [`拆掉同花顺 +${flushCost}`] : []), ...tacticalDetails] : undefined });
     } else {
       const controlBonus = opts.advanced && play.combo.type === 'single' && play.combo.key === BIG_JOKER && hand.length >= 10 ? 5 : 0;
-      nonBomb.push({ play, cost: s.frag * 10 + strength(play.combo) * 6 + s.wildsUsed * 8 + s.bombLoss * 40 + flushCost - controlBonus + tacticalCost,
-        details: report ? [`余牌结构变化 ${s.frag} × 10`, `牌力 ${strength(play.combo).toFixed(3)} × 6`, `逢人配 ${s.wildsUsed} × 8`, `拆炸 ${s.bombLoss} × 40`, ...(flushCost ? [`拆掉同花顺 +${flushCost}`] : []), ...(controlBonus ? [`大王取得单张控制机会 −${controlBonus}`] : []), ...tacticalDetails] : undefined });
+      nonBomb.push({ play, cost: s.frag * 10 + strength(play.combo) * 6 + s.wildsUsed * 8 + s.bombLoss * 40 + flushCost + pairCost + wildCost - controlBonus + tacticalCost,
+        details: report ? [`余牌结构变化 ${s.frag} × 10`, `牌力 ${strength(play.combo).toFixed(3)} × 6`, `逢人配 ${s.wildsUsed} × 8`, `拆炸 ${s.bombLoss} × 40`, ...(wildCost ? [`余牌较多且对手不紧急，保留逢人配 +${wildCost}`] : []), ...(pairCost ? [`三带二消耗控牌对子 +${pairCost}`] : []), ...(flushCost ? [`拆掉同花顺 +${flushCost}`] : []), ...(controlBonus ? [`大王取得单张控制机会 −${controlBonus}`] : []), ...tacticalDetails] : undefined });
     }
   }
   nonBomb.sort((a, b) => a.cost - b.cost);
@@ -235,6 +239,10 @@ function chooseLead(view: PlayerView, candidates: Play[], before: HandPlan, minO
     const s = structuralCost(hand, play, before, view);
     let cost = s.frag * 10 + strength(c) * 4 + s.wildsUsed * 8 + s.bombLoss * 30;
     const details = report ? [`余牌结构变化 ${s.frag} × 10`, `牌力 ${strength(c).toFixed(3)} × 4`, `逢人配 ${s.wildsUsed} × 8`, `拆炸 ${s.bombLoss} × 30`, `出牌 ${play.cards.length} 张 × −0.3`] : undefined;
+    const pairCost = fullHousePairCost(play, view.level);
+    if (pairCost) { cost += pairCost; details?.push(`三带二消耗控牌对子 +${pairCost}`); }
+    const wildCost = earlyWildCost(view, play);
+    if (wildCost) { cost += wildCost; details?.push(`余牌较多且对手不紧急，保留逢人配 +${wildCost}`); }
     for (const item of tactics ? tacticalAdjustments(view, play, tactics) : []) { cost += item.cost; details?.push(`${item.text} ${item.cost > 0 ? '+' : ''}${item.cost}`); }
     if (flushes.length && c.type !== 'straightFlush' && s.bombLoss === 0) {
       const remaining = new Set(without(hand, play.cards));

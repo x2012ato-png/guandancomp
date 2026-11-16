@@ -7,6 +7,7 @@ import { choosePlay, createBeginnerPolicy, DEFAULT_HEURISTIC, generateTacticalPl
 import { searchAdvancedWithInfo } from './advancedSearch.ts';
 import { tacticalAdjustments, tacticalContext } from './tactics.ts';
 import { buildCoachInsights, type CoachInsights } from './coachInsights.ts';
+import { fullHousePairCost } from './fullHouseCost.ts';
 import type { AIDecision, AIPolicy, DecisionContext } from './types.ts';
 
 const ENDGAME_HAND_LIMIT = 8;
@@ -78,6 +79,8 @@ function chooseEndgameLead(view: PlayerView, useTactics = true): { play: Play; s
     const turns = estimate(without(view.myHand, play.cards));
     let score = turns * 10;
     const adjustments: string[] = [];
+    const pairCost = fullHousePairCost(play, view.level);
+    if (pairCost) { score += pairCost; adjustments.push(`三带二消耗控牌对子 +${pairCost}`); }
     for (const item of tactics ? tacticalAdjustments(view, play, tactics) : []) { score += item.cost; adjustments.push(`${item.text} ${item.cost > 0 ? '+' : ''}${item.cost}`); }
     if (isBomb(play.combo)) { score += 4; adjustments.push('使用炸弹 +4'); }
     if (flushes.length && play.combo.type !== 'straightFlush') {
@@ -225,7 +228,7 @@ export function analyzeAdvancedPlay(view: PlayerView, options: AdvancedOptions =
         }
       }
       if (options.adoptSearch === false && !search.changed) reasons.push('模拟仅供参考，不会自动改变基础建议。');
-      if (search.scores.some(item => item.adjustment !== 0)) reasons.push('模拟评分还计入保留同花顺、大王控牌及当前局面的口诀战术偏好；这些只是加减分，并非必然结果。');
+      if (search.scores.some(item => item.adjustment !== 0)) reasons.push('模拟评分还计入保留同花顺、逢人配和控牌对子，以及大王控牌和当前局面的口诀战术偏好；这些只是加减分，并非必然结果。');
       if (view.previousTrick?.lastPlay && view.trick?.lastPlay && view.previousTrick.lastPlay.play.combo.type === view.trick.lastPlay.play.combo.type &&
           teamOf(view.previousTrick.lastPlay.seat) !== teamOf(view.seat) && view.previousTrick.passed.includes(partnerOf(view.seat)) && view.handCounts[partnerOf(view.seat)] > 0) {
         reasons.push('队友上轮对同类牌选择不要，采样时降低了其当时能用普通牌跟上的可能性；不要也可能是战术选择，不能断定队友没有牌。');

@@ -6,6 +6,8 @@ import {
 import { randomDeterminizer } from './determinize.ts';
 import { choosePlay, createHeuristicPolicy, DEFAULT_HEURISTIC, generateTacticalPlays, type HeuristicTrace } from './heuristic.ts';
 import { planHand } from './handPlan.ts';
+import { fullHousePairCost } from './fullHouseCost.ts';
+import { earlyWildCost } from './wildCost.ts';
 import { tacticalAdjustments, tacticalContext } from './tactics.ts';
 import { decisionToAction, type AIDecision, type DecisionContext } from './types.ts';
 
@@ -181,6 +183,10 @@ export function searchAdvancedWithInfo(view: PlayerView, fallback: AIDecision, c
     const breaksFlush = choice.play.combo.type !== 'straightFlush' && flushes.length > 0 && !flushes.some(flush => flush.cards.every(card => remaining.has(card)));
     const controlsSingle = choice.play.combo.type === 'single' && choice.play.combo.key === BIG_JOKER && view.myHand.length >= 10;
     const details: Adjustment[] = [];
+    const pairCost = fullHousePairCost(choice.play, view.level);
+    if (pairCost) details.push({ text: '三带二消耗控牌对子', value: -pairCost * 0.005 });
+    const wildCost = earlyWildCost(view, choice.play);
+    if (wildCost) details.push({ text: '余牌较多且对手不紧急，保留逢人配', value: -wildCost * 0.005 });
     if (breaksFlush) details.push({ text: '拆掉同花顺', value: -0.12 });
     if (controlsSingle) details.push({ text: '大王控单', value: 0.025 });
     if (useTactics) for (const item of tacticalAdjustments(view, choice.play, tactics)) details.push({ text: item.text, value: -item.cost * 0.005 });

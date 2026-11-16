@@ -1,4 +1,4 @@
-import { cardLabel, cardOf, cardPower, partnerOf, rankLabel, sortHand, suitLabel, teamOf, type CardId, type PlayerView, type Seat } from '@guandan/engine';
+import { cardLabel, cardOf, cardPower, comboLabel, makeDeck, partnerOf, rankLabel, sortHand, suitLabel, teamOf, type CardId, type PlayerView, type Seat, type TrickState } from '@guandan/engine';
 import { planHand } from './handPlan.ts';
 import { tacticalAdjustments, tacticalContext } from './tactics.ts';
 import type { AIDecision } from './types.ts';
@@ -37,12 +37,6 @@ function knownInformation(view: PlayerView): string[] {
       lines.push(`根据还贡记录，${seatName(view, link.from)}持有还贡牌 ${cardLabel(link.returnCard)}。`);
     }
   }
-  for (const offset of [1, 2, 3]) {
-    const seat = ((view.seat + offset) % 4) as Seat;
-    const history = (view.publicHistory ?? []).filter(entry => entry.seat === seat && entry.play).slice(-2);
-    const recent = history.map(entry => entry.play!.cards.map(cardLabel).join('、')).join('；');
-    lines.push(`${seatName(view, seat)}剩 ${view.handCounts[seat]} 张${recent ? `，最近出过 ${recent}` : ''}。`);
-  }
   return lines;
 }
 
@@ -57,27 +51,56 @@ function grouping(view: PlayerView, decision: PlayDecision): string {
   return `按当前建议${decision.type === 'play' ? '出牌后' : '保留手牌'}，可参考分组：${groups.join('；')}。三张和对子可考虑组成三带二；这是参考拆分，实际能否按顺序出完取决于后续牌权。`;
 }
 
-function possibilities(view: PlayerView, worlds: Search['worlds']): string[] {
-  if (!worlds.length) return [];
+function possibilities(view: PlayerView): string[] {
+  const visible = new Set([...view.myHand, ...view.playedCards]);
+  // 贡牌的归属有时无法确认；未知还贡可能把贡牌原样还回。
+  const owners = new Map<CardId, readonly Seat[]>();
+  for (const link of view.tribute?.links ?? []) {
+    if (!visible.has(link.card)) owners.set(link.card, link.returned && link.returnCard === null
+      ? [link.from, link.to] : [link.returned && link.returnCard === link.card ? link.from : link.to]);
+    if (link.returnCard !== null && !visible.has(link.returnCard)) owners.set(link.returnCard, [link.from]);
+  }
+  const unseen = makeDeck().filter(card => !visible.has(card));
+  const tricks = [view.previousTrick, view.trick].filter((trick): trick is TrickState => !!trick);
   return [1, 2, 3].map(offset => {
     const seat = ((view.seat + offset) % 4) as Seat;
     if (!view.handCounts[seat]) return `${seatName(view, seat)}已经出完。`;
-    const ranks = new Map<number, { samples: number; pairs: number; power: number }>();
-    for (const world of worlds) {
-      const counts = new Map<number, number>();
-      for (const card of world.hands[seat]) {
-        const rank = cardOf(card).rank;
-        counts.set(rank, (counts.get(rank) ?? 0) + 1);
-      }
-      for (const [rank, count] of counts) {
-        const entry = ranks.get(rank) ?? { samples: 0, pairs: 0, power: cardPower(world.hands[seat].find(card => cardOf(card).rank === rank)!, view.level) };
-        entry.samples++;
-        if (count >= 2) entry.pairs++;
-        ranks.set(rank, entry);
+    const fixed = unseen.filter(card => owners.get(card)?.length === 1 && owners.get(card)![0] === seat);
+    const canHold = unseen.filter(card => {
+      const allowed = owners.get(card);
+      return allowed?.length === 1 ? allowed[0] === seat : fixed.length < view.handCounts[seat] && (!allowed || allowed.includes(seat));
+    });
+    const ranks = new Map<number, number>();
+    for (const card of canHold) ranks.set(cardOf(card).rank, cardPower(card, view.level));
+    const top = [...ranks].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([rank]) => rankLabel(rank));
+    const details = [top.length
+      ? `可能持有 ${top.join('、')} 等牌：这些点数仍有牌未在你的手牌或已出牌中出现，且公开进还贡记录未排除其归属`
+      : '根据目前公开信息，没有可列出的未见牌'];
+
+    // 只在完整的轮次记录中关联上手牌，避免跨轮错误地解释“不要”或“压牌”。
+    const observations: string[] = [];
+    for (const trick of tricks) {
+      let last: typeof trick.lastPlay = null;
+      for (const entry of trick.history) {
+        if (entry.seat === seat) {
+          if (!entry.play && last) {
+            observations.push(`面对${seatName(view, last.seat)}的${comboLabel(last.play.combo)} ${last.play.cards.map(cardLabel).join('、')}时不要，可能当时缺少能压过的牌，也可能是战术让牌`);
+          } else if (entry.play && last) {
+            observations.push(`曾用${comboLabel(entry.play.combo)} ${entry.play.cards.map(cardLabel).join('、')}压过${seatName(view, last.seat)}的${comboLabel(last.play.combo)} ${last.play.cards.map(cardLabel).join('、')}，说明当时有这样的牌力`);
+          } else if (entry.play) {
+            observations.push(`曾出${comboLabel(entry.play.combo)} ${entry.play.cards.map(cardLabel).join('、')}，说明当时有这种牌型`);
+          }
+        }
+        if (entry.play) last = { seat: entry.seat, play: entry.play };
       }
     }
-    const top = [...ranks.entries()].sort((a, b) => b[1].power - a[1].power).slice(0, 3);
-    return `${seatName(view, seat)}：${top.map(([rank, value]) => `${rankLabel(rank)}在 ${value.samples}/${worlds.length} 组假设中出现${value.pairs ? `（其中 ${value.pairs} 组至少两张）` : ''}`).join('；')}。`;
+    if (!observations.length) {
+      const recent = (view.publicHistory ?? []).filter(entry => entry.seat === seat && entry.play).at(-1)?.play;
+      if (recent) observations.push(`曾出${comboLabel(recent.combo)} ${recent.cards.map(cardLabel).join('、')}，说明当时有这种牌型`);
+    }
+    if (observations.length) details.push(...observations.slice(-2), '这些出牌线索只能反映当时的手牌，不能确定现在仍持有什么');
+    else details.push('暂无可用于判断其牌力的出牌记录');
+    return `${seatName(view, seat)}：${details.join('；')}。`;
   });
 }
 
@@ -112,5 +135,5 @@ export function buildCoachInsights(view: PlayerView, decision: PlayDecision, sea
   const scenarios = selected?.examples.map((example, index) => scenarioFor(example, index, `假设 ${index + 1}：${decisionText(decision)}`)) ?? [];
   const alternative = search?.scores.filter(item => item !== selected).sort((a, b) => b.average - a.average)[0];
   if (alternative?.examples[0]) scenarios.push(scenarioFor(alternative.examples[0], 0, `对照假设 1：${decisionText(alternative.decision)}`));
-  return { assessment, known: knownInformation(view), possibilities: possibilities(view, search?.worlds ?? []), grouping: grouping(view, decision), scenarios };
+  return { assessment, known: knownInformation(view), possibilities: possibilities(view), grouping: grouping(view, decision), scenarios };
 }

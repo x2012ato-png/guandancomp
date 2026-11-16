@@ -26,11 +26,14 @@ describe('指导出牌区', () => {
   it('优先展示持牌推测、分组和假设推演，不展示内部评分', () => {
     const html = renderToStaticMarkup(createElement(CoachAdvice, { advice: {
       decision: { type: 'pass' }, reasons: ['模拟平均分 1.2'],
-      insights: { assessment: ['保留牌权'], known: ['下家剩 2 张'], possibilities: ['下家可能有大王'], grouping: '对子 ♠3、♦3',
+      insights: { assessment: ['保留牌权'], known: [], possibilities: ['下家可能有大王：大王仍未见'], grouping: '对子 ♠3、♦3',
         scenarios: [{ title: '假设 1', hands: ['下家假设持有大王'], steps: ['你不要', '下家出大王'], stop: '本局结束' }] },
     }, dealing: false, myTurn: true }));
     expect(html).toContain('已知信息');
     expect(html).toContain('其他人可能持有');
+    expect(html).toContain('下家可能有大王：大王仍未见');
+    expect(html).not.toContain('随机抽样');
+    expect(html).not.toContain('下家剩 2 张');
     expect(html).toContain('后续组牌');
     expect(html).toContain('下家假设持有大王');
     expect(html).toContain('下家出大王');

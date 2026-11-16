@@ -11,13 +11,12 @@ export function CoachAdvice({ advice, dealing, myTurn }: { advice: Advice | null
       {advice!.insights ? <div className="coach-insights">
         <p>{advice!.insights.assessment.join('；')}。</p>
         <h4>已知信息</h4>
-        <ul>{advice!.insights.known.map((line, index) => <li key={index}>{line}</li>)}</ul>
+        {advice!.insights.known.length > 0 ? <ul>{advice!.insights.known.map((line, index) => <li key={index}>{line}</li>)}</ul> : <p>暂无可确认归属的进还贡信息。</p>}
         {advice!.insights.possibilities.length > 0 && <>
           <h4>其他人可能持有</h4>
-          <p>根据已出牌、剩余张数和可见的进还贡信息随机抽样；部分情况下参考队友上轮不要。以下列出样本中出现的较大点数，并非实际手牌或胜率。</p>
+          <p>根据未见牌、进还贡和公开出牌记录分析。未见牌可能在不同玩家手中；出牌和不要也可能出于战术考虑，不能确定当前手牌。</p>
           <ul>{advice!.insights.possibilities.map((line, index) => <li key={index}>{line}</li>)}</ul>
         </>}
-        {!advice!.pending && advice!.insights.possibilities.length === 0 && <p>本次没有可展示的持牌抽样，当前采用基础建议。</p>}
         <h4>后续组牌</h4>
         <p>{advice!.insights.grouping}</p>
         {advice!.insights.scenarios.length > 0 && <>
