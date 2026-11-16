@@ -50,6 +50,21 @@ describe('高级策略的残局采样', () => {
     expect(info.candidates).toBeGreaterThan(1);
     expect(info.scores).toHaveLength(info.candidates);
     expect(info.scores.every(item => Number.isFinite(item.average))).toBe(true);
+    const firstWorld = sampleAdvancedWorld(view, makeRandom('twelve-samples'));
+    for (const item of info.scores) {
+      expect(item.example?.actions[0]).toEqual({ seat: view.seat, decision: item.decision });
+      expect(item.example?.value.explanation).toBeTruthy();
+      expect(item.adjustmentDetails.reduce((sum, part) => sum + part.value, 0)).toBeCloseTo(item.adjustment);
+      expect(item.winsAgainstFallback).toBeLessThanOrEqual(info.samples);
+      let replay = firstWorld;
+      for (const action of item.example!.actions) {
+        const result = reduce(replay, decisionToAction(action.seat, action.decision));
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error('Recorded simulation action was rejected');
+        replay = result.state;
+      }
+      if (item.example!.stop === '本局结束') expect(['handOver', 'matchOver']).toContain(replay.phase);
+    }
   });
   it('保持手牌数量和牌守恒，并遵循已知的贡牌和还贡归属', () => {
     const view = toPlayerView(endgame(), 0);

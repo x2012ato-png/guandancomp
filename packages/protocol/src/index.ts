@@ -115,6 +115,8 @@ export interface GameUpdate {
   readonly deadline: number | null;
   /** 发送更新时的服务端时间，用于显示与服务端同步的倒计时。 */
   readonly serverNow: number;
+  /** 两名真人出完后，结算时最后一手 AI 牌的显示截止时间。 */
+  readonly lastBotPlayUntil?: number | null;
   /** 开局动画的服务端时间，重连时用于恢复进度。 */
   readonly dealing: { readonly startedAt: number; readonly serverNow: number } | null;
 }
@@ -122,6 +124,13 @@ export interface GameUpdate {
 export interface CoachAdvice {
   readonly decision: { readonly type: 'pass' } | { readonly type: 'play'; readonly play: Play };
   readonly reasons: readonly string[];
+  readonly insights?: {
+    readonly assessment: readonly string[];
+    readonly known: readonly string[];
+    readonly possibilities: readonly string[];
+    readonly grouping: string;
+    readonly scenarios: readonly { readonly title: string; readonly hands: readonly string[]; readonly steps: readonly string[]; readonly stop: string }[];
+  };
   /** 后台仍在比较其他候选行动。 */
   readonly pending?: boolean;
 }

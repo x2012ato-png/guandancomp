@@ -11,14 +11,14 @@ import { SessionStore, type Session } from './sessions.ts';
 import { TokenBucket } from './rateLimit.ts';
 import { parseAction, parseConfig, parseRoomId, parseSeat, sanitizeNickname } from './validate.ts';
 import { PlayedCardsLog } from './playedCardsLog.ts';
-import { botDelay } from './botDelay.ts';
+import { botDelay, BOT_PLAY_DISPLAY_MS, isTwoHumanBotEndgame } from './botDelay.ts';
 import { nextHandDeadline, toggleReady } from './nextHand.ts';
 import { coachAdvice, hasCoach, shouldForcePass } from './coach.ts';
 import { automatedPolicy } from './automation.ts';
 import { runBackgroundCoach } from './backgroundCoach.ts';
 
 type Slot = { playerId: string; nickname: string; bot: boolean; botKind: BotKind | null; auto: boolean; ready: boolean } | null;
-type Room = { messages: ChatMessage[]; id: string; host: string; members: Set<string>; seats: [Slot, Slot, Slot, Slot]; config: ReturnType<typeof parseConfig>; game: GameState | null; version: number; timer: ReturnType<typeof setTimeout> | null; deadline: number | null; nextHandDeadline: number | null; dealingStartedAt: number | null };
+type Room = { messages: ChatMessage[]; id: string; host: string; members: Set<string>; seats: [Slot, Slot, Slot, Slot]; config: ReturnType<typeof parseConfig>; game: GameState | null; version: number; timer: ReturnType<typeof setTimeout> | null; deadline: number | null; nextHandDeadline: number | null; dealingStartedAt: number | null; lastBotPlayUntil: number | null };
 const sessions = new SessionStore();
 const rooms = new Map<string, Room>();
 type AdviceJob = { version: number; seat: Seat; playerId: string; advice: CoachAdvice; cancel: () => void };
@@ -100,7 +100,7 @@ function adviceFor(r: Room, seat: Seat): CoachAdvice | null {
   });
   return job.advice;
 }
-function update(r: Room, seat: Seat, events: readonly ScopedEvent[] = []): GameUpdate { const serverNow = Date.now(); return { roomId: r.id, version: r.version, view: toPlayerView(r.game!, seat), coachAdvice: adviceFor(r, seat), events: eventsForSeat(events, seat), deadline: r.deadline, serverNow, dealing: r.dealingStartedAt === null ? null : { startedAt: r.dealingStartedAt, serverNow } }; }
+function update(r: Room, seat: Seat, events: readonly ScopedEvent[] = []): GameUpdate { const serverNow = Date.now(); return { roomId: r.id, version: r.version, view: toPlayerView(r.game!, seat), coachAdvice: adviceFor(r, seat), events: eventsForSeat(events, seat), deadline: r.deadline, serverNow, lastBotPlayUntil: r.lastBotPlayUntil, dealing: r.dealingStartedAt === null ? null : { startedAt: r.dealingStartedAt, serverNow } }; }
 function broadcastGame(r: Room, events: readonly ScopedEvent[] = []) { for (const id of r.members) { const s = sessions.get(id); if (!s) continue; const seat = seatOf(r, s); if (seat !== null) for (const sid of s.sockets) io.to(sid).emit('game:update', update(r, seat, events)); } }
 function schedule(r: Room) {
   botJobs.get(r)?.(); botJobs.delete(r);
@@ -127,7 +127,7 @@ function schedule(r: Room) {
       if (!r.game || !shouldForcePass(r.game, r.seats, forcedPass)) return;
       const result = reduce(r.game, { type: 'pass', seat: forcedPass });
       if (result.ok) commit(r, result.state, result.events);
-    }, 500);
+    }, 5_000);
     return;
   }
   const automated = actors.find(seat => { const slot = r.seats[seat]!; return slot.bot || slot.auto; });
@@ -153,7 +153,7 @@ function schedule(r: Room) {
     } else apply(decision);
   }, delay);
 }
-function commit(r: Room, state: GameState, events: readonly ScopedEvent[]) { cancelAdvice(r); r.game = state; r.version++; try { playedCardsLog.record(r.id, r.seats, events); } catch (error) { console.error('Failed to write played cards log', error); } if (state.phase === 'handOver') for (const s of r.seats) if (s) s.ready = s.bot; schedule(r); broadcastRoom(r); broadcastGame(r, events); }
+function commit(r: Room, state: GameState, events: readonly ScopedEvent[]) { r.lastBotPlayUntil = r.game && isTwoHumanBotEndgame(r.game, r.seats) && (state.phase === 'handOver' || state.phase === 'matchOver') && events.some(event => event.event.type === 'played' && r.seats[event.event.seat]?.bot) ? Date.now() + BOT_PLAY_DISPLAY_MS : null; cancelAdvice(r); r.game = state; r.version++; try { playedCardsLog.record(r.id, r.seats, events); } catch (error) { console.error('Failed to write played cards log', error); } if (state.phase === 'handOver') for (const s of r.seats) if (s) s.ready = s.bot; schedule(r); broadcastRoom(r); broadcastGame(r, events); }
 function startHand(r: Room) { if (!r.game) return; const result = reduce(r.game, { type: 'startHand' }); if (result.ok) { r.dealingStartedAt = Date.now(); commit(r, result.state, result.events); } }
 function leave(s: Session) { const r = roomOf(s); if (!r) { s.roomId = null; return; } const seat = seatOf(r,s); if (seat !== null && adviceJobs.get(r)?.seat === seat) cancelAdvice(r); if (r.game && seat !== null && r.game.phase !== 'matchOver') { const slot = r.seats[seat]!; slot.bot = true; slot.botKind = 'beginner'; slot.auto = true; slot.playerId = `bot:${randomBytes(8).toString('hex')}`; slot.nickname += ' (AI)'; } else if (seat !== null) r.seats[seat] = null; r.members.delete(s.playerId); s.roomId = null; if (!r.members.size) { if (r.timer) clearTimeout(r.timer); botJobs.get(r)?.(); botJobs.delete(r); rooms.delete(r.id); return; } if (r.host === s.playerId) r.host = [...r.members][0]!; schedule(r); broadcastRoom(r); }
 io.on('connection', socket => {
@@ -162,7 +162,7 @@ io.on('connection', socket => {
   socket.emit('session', { playerId: s.playerId, token: s.token, nickname: s.nickname, roomId: s.roomId });
   const existing = roomOf(s); if (existing) { broadcastRoom(existing); const seat = seatOf(existing,s); if (seat !== null && existing.game) socket.emit('game:update', update(existing,seat)); }
   function guard(ack: AckFn<any>): boolean { if (typeof ack !== 'function') return false; if (!bucket.take()) { fail(ack,'RATE_LIMITED','操作太频繁'); if (bucket.violations >= DEFAULT_TUNING.rate.maxViolations) socket.disconnect(true); return false; } return true; }
-  socket.on('room:create', (p, ack) => { if (!guard(ack)) return; if (s.roomId) return fail(ack,'BAD_REQUEST','请先离开当前房间'); const id = DEFAULT_ROOM_ID; if (rooms.has(id)) return fail(ack,'BAD_REQUEST','房间 666888 已存在，请加入现有房间'); const r: Room = { messages: [], id, host:s.playerId, members:new Set([s.playerId]), seats:[null,null,null,null], config:parseConfig(p?.config), game:null, version:0,timer:null,deadline:null,nextHandDeadline:null,dealingStartedAt:null }; rooms.set(id,r); s.roomId=id; ok(ack,snapshot(r,s)); broadcastRoom(r); });
+  socket.on('room:create', (p, ack) => { if (!guard(ack)) return; if (s.roomId) return fail(ack,'BAD_REQUEST','请先离开当前房间'); const id = DEFAULT_ROOM_ID; if (rooms.has(id)) return fail(ack,'BAD_REQUEST','房间 666888 已存在，请加入现有房间'); const r: Room = { messages: [], id, host:s.playerId, members:new Set([s.playerId]), seats:[null,null,null,null], config:parseConfig(p?.config), game:null, version:0,timer:null,deadline:null,nextHandDeadline:null,dealingStartedAt:null,lastBotPlayUntil:null }; rooms.set(id,r); s.roomId=id; ok(ack,snapshot(r,s)); broadcastRoom(r); });
   socket.on('room:join', (p,ack) => {
     if (!guard(ack)) return;
     if (s.roomId) return fail(ack,'BAD_REQUEST','请先离开当前房间');

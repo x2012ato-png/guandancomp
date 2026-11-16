@@ -56,6 +56,7 @@ describe('seat plays', () => {
     state = act(state, { type: 'play', seat: 2, cards: [card('S4')] });
     expect(state.phase).toBe('handOver');
     expect(trickPlaysBySeat(state.trick, false)).toEqual({});
+    expect(trickPlaysBySeat(state.trick, false, true)).toEqual({ 2: state.trick?.lastPlay?.play });
     expect(trickPassesBySeat(state.trick, false)).toEqual({});
   });
 

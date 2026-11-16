@@ -17,6 +17,14 @@ describe('bot delay', () => {
     expect(botDelay({ ...playing, finishOrder: [0] }, [human, bot, bot, bot], 900)).toBe(50);
   });
 
+  it('allows five seconds to observe each bot action once both humans finish', () => {
+    const seats = [human, human, bot, bot];
+    expect(botDelay({ ...playing, finishOrder: [0, 1] }, seats, 900)).toBe(5000);
+    expect(botDelay({ ...playing, finishOrder: [0, 2] }, seats, 900)).toBe(50);
+    expect(botDelay({ ...playing, finishOrder: [0, 1] }, [human, bot, bot, bot], 900)).toBe(50);
+    expect(botDelay({ ...playing, phase: 'handOver', finishOrder: [0, 1] }, seats, 900)).toBe(900);
+  });
+
   it('keeps the usual pace when multiple bots and a human are still playing', () => {
     expect(botDelay({ ...playing, finishOrder: [3] }, [human, bot, bot, bot], 900)).toBe(900);
     expect(botDelay({ ...playing, finishOrder: [1] }, [human, bot, human, human], 900)).toBe(900);

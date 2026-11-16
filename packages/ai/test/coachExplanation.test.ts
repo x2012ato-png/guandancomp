@@ -42,5 +42,13 @@ describe('教练策略解释', () => {
     expect(text).toContain('样本：');
     expect(text).toContain('分数越高越优');
     expect(text).toContain('出牌权');
+    expect(text).toContain('每个候选分数 =');
+    expect(text).toContain('本手调整明细');
+    expect(text).toContain('调整基础建议的条件');
+    expect(text).toContain('模拟过程示例');
+    expect(text).toContain('第 1 组假设分牌');
+    expect(text).toContain('停止原因');
+    expect(text).toContain('该组局面分');
+    expect(text).toContain('该组总分');
   });
 });

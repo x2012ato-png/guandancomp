@@ -145,6 +145,7 @@
 
 .coach-advice{margin:14px 0;padding:14px 16px;border:1px solid #d6b76d80;border-radius:8px;background:#102d25;color:#d9e7dd;line-height:1.55;font-size:14px}
 .coach-advice h3{margin:0 0 8px;color:#f2daa0;font-size:15px}.coach-advice h3 span{font-size:11px;font-weight:normal;color:#a8c3b3;margin-left:6px}.coach-advice p{margin:5px 0}.coach-advice .coach-recommendation{color:#fff2cb;font-weight:700}.coach-advice ul{margin:8px 0 0;padding-left:20px}.coach-advice li+li{margin-top:4px}
+.coach-insights h4{margin:12px 0 4px;color:#f2daa0;font-size:14px}.coach-insights details{margin-top:8px}.coach-insights summary{cursor:pointer;color:#e9d49b}.coach-insights ol{padding-left:24px}
 
 .seat-actions button{white-space:nowrap}
 @media (orientation:landscape) and (max-height:550px){.in-room .seat-actions{flex-wrap:wrap;justify-content:center}}

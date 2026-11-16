@@ -102,10 +102,16 @@ function candidates(view: PlayerView, fallback: AIDecision, useTactics: boolean)
   return choices;
 }
 
-function value(state: GameState, seat: Seat): number {
+interface ValueDetail { score: number; explanation: string }
+export interface SimulationExample { actions: { seat: Seat; decision: AIDecision }[]; stop: string; value: ValueDetail }
+interface Adjustment { text: string; value: number }
+
+function value(state: GameState, seat: Seat): ValueDetail {
   const team = teamOf(seat);
   if ((state.phase === 'handOver' || state.phase === 'matchOver') && state.lastResult) {
-    return (state.lastResult.winTeam === team ? 1 : -1) * (1 + state.lastResult.upgrade * 0.15);
+    const won = state.lastResult.winTeam === team;
+    return { score: (won ? 1 : -1) * (1 + state.lastResult.upgrade * 0.15),
+      explanation: `${won ? '我方获胜' : '对方获胜'}，升 ${state.lastResult.upgrade} 级：${won ? '+' : '−'}(1 + ${state.lastResult.upgrade} × 0.15)` };
   }
   const ours = state.hands[team]!.length + state.hands[team + 2]!.length;
   const theirs = state.hands[1 - team]!.length + state.hands[3 - team]!.length;
@@ -116,25 +122,31 @@ function value(state: GameState, seat: Seat): number {
   const control = owner == null ? 0 : teamOf(owner) === team ? 0.025 : -0.025;
   const first = state.finishOrder[0];
   const finish = first == null ? 0 : teamOf(first) === team ? 0.2 : -0.2;
-  return (theirs - ours) / DECK_SIZE + resourcesDiff * 0.015 + control + finish;
+  return { score: (theirs - ours) / DECK_SIZE + resourcesDiff * 0.015 + control + finish,
+    explanation: `余牌（对方 ${theirs} − 我方 ${ours}）÷ ${DECK_SIZE}；资源差 ${resourcesDiff} × 0.015（炸弹每个算 1，逢人配每张算 0.5）；牌权 ${control >= 0 ? '+' : ''}${control}；头游 ${finish >= 0 ? '+' : ''}${finish}` };
 }
 
-function simulate(state: GameState, decision: AIDecision, seat: Seat, deadline?: number): number | null {
+function simulate(state: GameState, decision: AIDecision, seat: Seat, deadline?: number, capture = false): { score: number; example?: SimulationExample } | null {
   const initial = reduce(state, decisionToAction(seat, decision));
-  if (!initial.ok) return -2;
+  if (!initial.ok) return { score: -2, example: capture ? { actions: [{ seat, decision }], stop: '候选行动无法执行', value: { score: -2, explanation: '无效行动固定记 −2 分' } } : undefined };
   let current = initial.state;
   const steps = state.hands.flat().length > MAX_REMAINING_CARDS ? 12 : MAX_STEPS;
+  const actions: SimulationExample['actions'] = capture ? [{ seat, decision }] : [];
+  let stop = `达到后续 ${steps} 步上限`;
   for (let i = 0; i < steps && current.phase === 'playing'; i++) {
     if (deadline !== undefined && Date.now() >= deadline) return null;
     const actor = pendingActors(current)[0];
-    if (actor === undefined) break;
+    if (actor === undefined) { stop = '没有待行动玩家'; break; }
     const action = rolloutPolicy.decide(toPlayerView(current, actor));
-    if (!action) break;
+    if (!action) { stop = '模拟策略没有返回行动'; break; }
     const result = reduce(current, decisionToAction(actor, action));
-    if (!result.ok) break;
+    if (!result.ok) { stop = '模拟行动无法执行'; break; }
+    if (capture) actions.push({ seat: actor, decision: action });
     current = result.state;
   }
-  return value(current, seat);
+  if (current.phase === 'handOver' || current.phase === 'matchOver') stop = '本局结束';
+  const evaluated = value(current, seat);
+  return { score: evaluated.score, example: capture ? { actions, stop, value: evaluated } : undefined };
 }
 
 /** 当样本数或一致性不足时，继续采用基准行动。 */
@@ -150,8 +162,8 @@ export function selectStableCandidate(totals: readonly number[], winsAgainstFall
 }
 
 /** 每个候选动作使用相同样本；截止时间中断时仅采用完整的一组样本。 */
-export function searchAdvancedWithInfo(view: PlayerView, fallback: AIDecision, ctx?: DecisionContext, allPhases = false, useTactics = true): { decision: AIDecision; samples: number; candidates: number; changed: boolean; scores: readonly { decision: AIDecision; average: number; adjustment: number }[] } {
-  const noSearch = { decision: fallback, samples: 0, candidates: 0, changed: false, scores: [] };
+export function searchAdvancedWithInfo(view: PlayerView, fallback: AIDecision, ctx?: DecisionContext, allPhases = false, useTactics = true): { decision: AIDecision; samples: number; candidates: number; changed: boolean; scores: readonly { decision: AIDecision; average: number; adjustment: number; adjustmentDetails: readonly Adjustment[]; winsAgainstFallback: number; example?: SimulationExample; examples: readonly SimulationExample[] }[]; worlds: readonly GameState[] } {
+  const noSearch = { decision: fallback, samples: 0, candidates: 0, changed: false, scores: [], worlds: [] };
   if (view.phase !== 'playing' || (!allPhases && view.handCounts.reduce((a, b) => a + b, 0) > MAX_REMAINING_CARDS) ||
       view.playedCards.length + view.handCounts.reduce((a, b) => a + b, 0) !== DECK_SIZE ||
       view.myHand.length !== view.handCounts[view.seat]) return noSearch;
@@ -163,31 +175,43 @@ export function searchAdvancedWithInfo(view: PlayerView, fallback: AIDecision, c
     if (choice.type !== 'play') {
       const partner = partnerOf(view.seat);
       return useTactics && choice.type === 'pass' && view.trick?.lastPlay && teamOf(view.trick.lastPlay.seat) !== teamOf(view.seat) &&
-        tactics.mode === 'support' && view.handCounts[partner] > 0 && !view.trick.passed.includes(partner) ? 0.02 : 0;
+        tactics.mode === 'support' && view.handCounts[partner] > 0 && !view.trick.passed.includes(partner) ? [{ text: '让队友接牌', value: 0.02 }] : [];
     }
     const remaining = new Set(view.myHand.filter(card => !choice.play.cards.includes(card)));
     const breaksFlush = choice.play.combo.type !== 'straightFlush' && flushes.length > 0 && !flushes.some(flush => flush.cards.every(card => remaining.has(card)));
     const controlsSingle = choice.play.combo.type === 'single' && choice.play.combo.key === BIG_JOKER && view.myHand.length >= 10;
-    const tactical = useTactics ? tacticalAdjustments(view, choice.play, tactics).reduce((sum, item) => sum + item.cost, 0) : 0;
-    return (breaksFlush ? -0.12 : 0) + (controlsSingle ? 0.025 : 0) - tactical * 0.005;
+    const details: Adjustment[] = [];
+    if (breaksFlush) details.push({ text: '拆掉同花顺', value: -0.12 });
+    if (controlsSingle) details.push({ text: '大王控单', value: 0.025 });
+    if (useTactics) for (const item of tacticalAdjustments(view, choice.play, tactics)) details.push({ text: item.text, value: -item.cost * 0.005 });
+    return details;
   });
+  const adjustmentTotals = adjustments.map(items => items.reduce((sum, item) => sum + item.value, 0));
   const seed = `${view.handNo}:${view.seat}:${[...view.myHand].sort((a, b) => a - b)}:${view.playedCards.join(',')}:${view.handCounts.join(',')}`;
   const rng = ctx?.rng ?? makeRandom(seed);
   const totals = choices.map(() => 0);
   const winsAgainstFallback = choices.map(() => 0);
   let completed = 0;
+  let examples: (SimulationExample | undefined)[] = [];
+  const scenarioExamples: SimulationExample[][] = choices.map(() => []);
+  const worlds: GameState[] = [];
   for (let sample = 0; sample < SAMPLES; sample++) {
     if (ctx?.deadline !== undefined && Date.now() >= ctx.deadline) break;
     const world = sampleAdvancedWorld(view, rng);
     const results: number[] = [];
+    const sampleExamples: (SimulationExample | undefined)[] = [];
     for (const choice of choices) {
       if (ctx?.deadline !== undefined && Date.now() >= ctx.deadline) break;
-      const result = simulate(world, choice, view.seat, ctx?.deadline);
+      const result = simulate(world, choice, view.seat, ctx?.deadline, completed < 2);
       if (result === null) break;
-      results.push(result);
+      results.push(result.score);
+      sampleExamples.push(result.example);
     }
     if (results.length !== choices.length) break;
-    const adjusted = results.map((value, i) => value + adjustments[i]!);
+    if (!completed) examples = sampleExamples;
+    if (completed < 2) sampleExamples.forEach((example, i) => { if (example) scenarioExamples[i]!.push(example); });
+    worlds.push(world);
+    const adjusted = results.map((value, i) => value + adjustmentTotals[i]!);
     adjusted.forEach((v, i) => {
       totals[i]! += v;
       if (i > 0 && v > adjusted[0]!) winsAgainstFallback[i]!++;
@@ -199,7 +223,7 @@ export function searchAdvancedWithInfo(view: PlayerView, fallback: AIDecision, c
   const earlyGame = view.handCounts.reduce((a, b) => a + b, 0) > MAX_REMAINING_CARDS;
   const best = selectStableCandidate(totals, winsAgainstFallback, completed, earlyGame);
   return { decision: choices[best]!, samples: completed, candidates: choices.length, changed: best !== 0,
-    scores: choices.map((decision, index) => ({ decision, average: totals[index]! / completed, adjustment: adjustments[index]! })) };
+    scores: choices.map((decision, index) => ({ decision, average: totals[index]! / completed, adjustment: adjustmentTotals[index]!, adjustmentDetails: adjustments[index]!, winsAgainstFallback: winsAgainstFallback[index]!, example: examples[index], examples: scenarioExamples[index]! })), worlds };
 }
 
 export function searchAdvanced(view: PlayerView, fallback: AIDecision, ctx?: DecisionContext): AIDecision {

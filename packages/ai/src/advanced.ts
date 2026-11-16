@@ -1,11 +1,12 @@
 /** 高级策略：沿用初级策略，只在有把握评估的局面增加残局判断。 */
 import {
-  cardLabel, cardPower, comboLabel, DECK_SIZE, generatePlays, isBomb, nextSeat, partnerOf, teamOf,
+  cardLabel, cardPower, comboLabel, DECK_SIZE, generatePlays, isBomb, nextSeat, partnerOf, rankLabel, suitLabel, teamOf,
   type CardId, type Play, type PlayerView,
 } from '@guandan/engine';
 import { choosePlay, createBeginnerPolicy, DEFAULT_HEURISTIC, generateTacticalPlays, type HeuristicTrace } from './heuristic.ts';
 import { searchAdvancedWithInfo } from './advancedSearch.ts';
 import { tacticalAdjustments, tacticalContext } from './tactics.ts';
+import { buildCoachInsights, type CoachInsights } from './coachInsights.ts';
 import type { AIDecision, AIPolicy, DecisionContext } from './types.ts';
 
 const ENDGAME_HAND_LIMIT = 8;
@@ -106,7 +107,7 @@ function chooseEndgameLead(view: PlayerView, useTactics = true): { play: Play; s
   return { play: scores[0]!.play, scores };
 }
 
-function formatScore(score: number): string { return Number(score.toFixed(3)).toString(); }
+function formatScore(score: number): string { return Number(score.toFixed(4)).toString(); }
 function playName(play: Play): string { return `${play.cards.map(cardLabel).join('、')}（${comboLabel(play.combo)}）`; }
 function decisionName(decision: AIDecision): string { return decision.type === 'play' ? playName(decision.play) : '不要'; }
 
@@ -162,6 +163,7 @@ export interface AdvancedOptions {
 export interface AdvancedPlayAnalysis {
   readonly decision: Extract<AIDecision, { type: 'play' | 'pass' }>;
   readonly reasons: readonly string[];
+  readonly insights: CoachInsights;
 }
 
 /** 与高级策略使用同一次决策，解释其实际走过的分支。 */
@@ -173,6 +175,7 @@ export function analyzeAdvancedPlay(view: PlayerView, options: AdvancedOptions =
   const last = view.trick?.lastPlay;
   const reasons: string[] = [];
   let decision: typeof base = base;
+  let searchInfo: ReturnType<typeof searchAdvancedWithInfo> | undefined;
   let method: 'finish' | 'partner' | 'partnerTake' | 'cover' | 'endgame' | 'basic' = 'basic';
   let endgameScores: EndgameScore[] | undefined;
   if (base.type === 'play' && base.play.cards.length === view.myHand.length) {
@@ -191,13 +194,25 @@ export function analyzeAdvancedPlay(view: PlayerView, options: AdvancedOptions =
   }
   if (options.search !== false && method !== 'finish' && (method !== 'partner' && method !== 'partnerTake' && method !== 'cover' || options.allPhases)) {
     const search = searchAdvancedWithInfo(view, decision, ctx, options.allPhases, options.tactics !== false);
+    searchInfo = search;
     if (search.samples) {
       const bestAverage = Math.max(...search.scores.map(item => item.average));
       const conclusion = search.changed ? options.adoptSearch === false
         ? `模拟倾向 ${decisionName(search.decision)}，仅供参考，仍保留基础建议` : '因此调整了原建议' : bestAverage > search.scores[0]!.average
         ? '其他行动虽有更高平均分，但样本数量、一致性或优势不足，保留原建议' : '原建议的评分不低于其他候选行动';
       reasons.push(`${view.handCounts.reduce((a, b) => a + b, 0) <= 18 ? '残局' : '牌局'}模拟比较了 ${search.candidates} 个候选行动，每个行动使用相同的 ${search.samples} 组未知手牌样本：${search.scores.map(item => `${decisionName(item.decision)} ${formatScore(item.average)} 分${item.adjustment ? `（含本手调整 ${item.adjustment > 0 ? '+' : ''}${formatScore(item.adjustment)}）` : ''}`).join('；')}。分数越高越优，${conclusion}。`);
-      reasons.push('模拟结束时按队伍胜负和升级数评分；未结束时结合双方余牌、炸弹和逢人配、出牌权及头游形势评分。未知牌只是可能的分配，后续按口诀启发式推演，结果不能保证实际对手会这样出牌。');
+      reasons.push('每个候选分数 = 各组推演局面分的平均值 + 该出法的固定调整。局面分：结束时，胜方为 +(1 + 升级数 × 0.15)，负方为 −(1 + 升级数 × 0.15)；未结束时为（对方余牌 − 我方余牌）÷ 108 + 资源差 × 0.015 + 出牌权分 + 头游分。资源中炸弹算 1、逢人配算 0.5；出牌权在我方为 +0.025、对方为 −0.025、无人持有为 0；头游在我方为 +0.2、对方为 −0.2、尚无头游为 0。');
+      reasons.push(`本手调整明细：${search.scores.map(item => `${decisionName(item.decision)}：${item.adjustmentDetails.length ? item.adjustmentDetails.map(detail => `${detail.text} ${detail.value >= 0 ? '+' : ''}${formatScore(detail.value)}`).join('，') : '无调整'}，合计 ${item.adjustment >= 0 ? '+' : ''}${formatScore(item.adjustment)}`).join('；')}。战术代价按 −0.005 倍换算为模拟分。`);
+      const earlyGame = view.handCounts.reduce((a, b) => a + b, 0) > 18;
+      reasons.push(`调整基础建议的条件：${earlyGame ? '至少 4 组样本，且至少 80% 的样本优于基础建议，平均优势至少 0.08 分' : '至少 3 组样本，且至少 75% 的样本优于基础建议，平均优势至少 0.04 分'}。${search.scores.slice(1).map(item => `${decisionName(item.decision)}：${item.winsAgainstFallback}/${search.samples} 组优于基础建议，平均差 ${formatScore(item.average - search.scores[0]!.average)} 分`).join('；')}。`);
+      const exampleScores = search.changed ? [search.scores[0]!, search.scores.find(item => item.decision === search.decision)!] : [search.scores[0]!];
+      for (const item of exampleScores) {
+        const example = item.example;
+        if (!example) continue;
+        const name = (seat: number) => seat === view.seat ? '你' : seat === partnerOf(view.seat) ? '队友' : (seat + 4 - view.seat) % 4 === 1 ? '下家（对手）' : '上家（对手）';
+        reasons.push(`模拟过程示例（${decisionName(item.decision)}）：第 1 组假设分牌下，${example.actions.map((action, index) => `${index + 1}. ${name(action.seat)} ${decisionName(action.decision)}${action.decision.type === 'play' && action.decision.play.wildAssignments.length ? `（逢人配 ${action.decision.play.wildAssignments.map(w => `${cardLabel(w.cardId)}→${suitLabel(w.suit)}${rankLabel(w.rank)}`).join('、')}）` : ''}`).join(' → ')}。停止原因：${example.stop}。该组局面分：${example.value.explanation} = ${formatScore(example.value.score)} 分；本手调整 ${item.adjustment >= 0 ? '+' : ''}${formatScore(item.adjustment)}，该组总分 ${formatScore(example.value.score + item.adjustment)} 分。`);
+      }
+      reasons.push('以上过程只是一组假设：未知手牌按公开信息采样，后续各家按启发式策略出牌；其他样本的过程可能不同，平均分也不是这一组的分数。模拟不能保证真实对手这样出牌。');
       const tacticalView = tacticalContext(view);
       const alternative = search.scores.filter(item => item.decision !== search.decision).sort((a, b) => b.average - a.average)[0];
       for (const candidate of [search.decision, alternative?.decision]) {
@@ -215,14 +230,14 @@ export function analyzeAdvancedPlay(view: PlayerView, options: AdvancedOptions =
           teamOf(view.previousTrick.lastPlay.seat) !== teamOf(view.seat) && view.previousTrick.passed.includes(partnerOf(view.seat)) && view.handCounts[partnerOf(view.seat)] > 0) {
         reasons.push('队友上轮对同类牌选择不要，采样时降低了其当时能用普通牌跟上的可能性；不要也可能是战术选择，不能断定队友没有牌。');
       }
-    }
+    } else reasons.push('本次没有完成可比较的模拟样本（可能是候选行动不足、局面不符合采样条件或计算时间用完），以下采用基础建议。');
     if (options.adoptSearch !== false) {
       if (search.decision.type === 'play' || search.decision.type === 'pass') decision = search.decision;
       if (search.changed) method = 'basic';
     }
   }
   if (!reasons.length || method !== 'basic' || options.adoptSearch === false) {
-    if (method === 'finish') reasons.push('这手牌符合当前出牌要求，并且能一次出完手牌，因此优先走完。');
+    if (method === 'finish') reasons.push('这手牌符合当前出牌要求，并且能一次出完手牌，因此优先走完，无需模拟比较。');
     else if (method === 'cover') reasons.push('下一家只剩一张，队友的单张可能被压；建议用当前没有更大未知单张的牌接住，阻止下一家以单张立即走完。');
     else if (method === 'partner') reasons.push('当前最大牌来自队友，通常让队友保留出牌权，避免无必要地消耗自己的大牌。');
     else if (method === 'partnerTake') reasons.push('队友仍有多张牌，而对手接近走完；自己的控牌和余牌结构允许时，考虑用大王接管单张，之后再为队友创造机会。');
@@ -235,7 +250,7 @@ export function analyzeAdvancedPlay(view: PlayerView, options: AdvancedOptions =
     } else if (isBomb(decision.play.combo)) reasons.push('当前需要跟牌；策略结合对手剩余张数和自己的余牌结构，决定使用炸弹争取出牌权。');
     else reasons.push('当前需要跟牌；策略在能压过上家的牌中权衡牌力、拆牌、炸弹和逢人配的代价。');
   }
-  return { decision, reasons };
+  return { decision, reasons, insights: buildCoachInsights(view, decision, searchInfo) };
 }
 
 export function createAdvancedPolicy(options: AdvancedOptions = {}): AIPolicy {
