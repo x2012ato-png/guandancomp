@@ -3,7 +3,7 @@
  *
  * 原则：
  *  - 客户端永远不发送 seat，服务端根据会话确定座位；
- *  - 服务端只发送 PlayerView（经 toPlayerView 投影）与按座位过滤的事件；
+ *  - 服务端发送 PlayerView、按座位过滤的事件及结算时短暂公开的剩余手牌；
  *  - 每次状态变化 version+1，客户端丢弃旧版本，发现跳号时调用 game:sync 全量同步。
  */
 import type {
@@ -117,6 +117,8 @@ export interface GameUpdate {
   readonly serverNow: number;
   /** 两名真人出完后，结算时最后一手 AI 牌的显示截止时间。 */
   readonly lastBotPlayUntil?: number | null;
+  /** 结算后短暂公开末游手牌，双下时同时公开三游手牌。 */
+  readonly lastPlaceReveal: { readonly hands: readonly { readonly seat: Seat; readonly cards: readonly CardId[]; readonly place: number }[]; readonly until: number } | null;
   /** 开局动画的服务端时间，重连时用于恢复进度。 */
   readonly dealing: { readonly startedAt: number; readonly serverNow: number } | null;
 }

@@ -118,6 +118,15 @@ function App() {
   const timer=window.setTimeout(()=>setShowLastBotPlay(false),remaining);
   return()=>window.clearTimeout(timer);
  },[game?.lastBotPlayUntil,game?.serverNow]);
+ const [showLastPlace,setShowLastPlace]=useState(false);
+ useEffect(()=>{
+  const remaining=(game?.lastPlaceReveal?.until ?? 0)-(game?.serverNow ?? 0);
+  setShowLastPlace(remaining>0);
+  if(remaining<=0)return;
+  const timer=window.setTimeout(()=>setShowLastPlace(false),remaining);
+  return()=>window.clearTimeout(timer);
+ },[game?.lastPlaceReveal?.until,game?.serverNow]);
+ const reveal=showLastPlace ? game?.lastPlaceReveal : null;
  const seatPlays=trickPlaysBySeat(view?.trick ?? null,view?.phase==='playing',showLastBotPlay);
  const seatPasses=trickPassesBySeat(view?.trick ?? null,view?.phase==='playing');
  const plays=useMemo(()=>{if(!view || !selected.length || view.myDuty!=='play')return []; const last=view.trick?.lastPlay?.play.combo; return interpret(selected,view.level,view.config).filter(p=>!last || beats(p.combo,last));},[view,selected]);
@@ -145,7 +154,19 @@ function App() {
  function play(p:Play){const action:Extract<ClientGameAction,{type:'play'}>={type:'play',cards:p.cards,combo:{type:p.combo.type,key:p.combo.key,...(p.combo.suit?{suit:p.combo.suit}:{})},wildAssignments:p.wildAssignments}; submitPlayAction(action);}
  const validDuty = view?.myDuty==='tribute'? validTributeCards(view.myHand,view.level):view?.myDuty==='return'?validReturnCards(view.myHand,view.level,view.config):[];
  const pos=(offset:number):Seat=>(((room?.you.seat ?? 0)+offset)%4) as Seat;
- function playedAtSeat(seat:Seat){const play=seatPlays[seat],passed=seatPasses[seat],active=view?.phase==='playing'&&view.turn===seat;if((!play&&!passed&&!active) || !view)return null;const offset=(seat-(room!.you.seat??0)+4)%4;const cards=play?displayPlayCards(play,displayedLevel!):[];return <div className={`seat-play seat-play${offset} ${passed?'seat-play-passed':''} ${active?'seat-play-active':''}`} key={`play-${seat}`}>{play&&<div className="played card-row" aria-label={`${room!.seats[seat].nickname} 出牌：${cards.map(cardLabel).join('，')}`} style={{...cardRowStyle(cards.length), '--portrait-play-width': `${Math.max(cards.length - 1, 0) * 11}px`} as React.CSSProperties}>{cards.map(c=><span className={`mini-card ${cardOf(c).suit==='H'||cardOf(c).suit==='D'||cardOf(c).rank===17?'red':''}`} key={c}><CardCorner card={c} compactJoker/></span>)}</div>}{passed&&<span className="seat-pass" aria-label={`${room!.seats[seat].nickname} 不要`}>不要</span>}</div>;}
+ function playedAtSeat(seat:Seat){
+  const play=seatPlays[seat],passed=seatPasses[seat],active=view?.phase==='playing'&&view.turn===seat;
+  const remaining=reveal?.hands.find(hand=>hand.seat===seat);
+  if((!play&&!passed&&!active&&!remaining) || !view)return null;
+  const offset=(seat-(room!.you.seat??0)+4)%4;
+  const cards=remaining ? sortHand([...remaining.cards],displayedLevel!) : play ? displayPlayCards(play,displayedLevel!) : [];
+  const place=remaining?.place===3?'三游':'末游';
+  return <div className={`seat-play seat-play${offset} ${remaining?'seat-play-reveal':''} ${passed?'seat-play-passed':''} ${active?'seat-play-active':''}`} key={`play-${seat}`}>
+   {remaining&&<span className="reveal-label">{room!.seats[seat].nickname} · {place}剩余手牌</span>}
+   {(play||remaining)&&<div className="played card-row" aria-label={`${room!.seats[seat].nickname} ${remaining?`${place}剩余手牌`:'出牌'}：${cards.map(cardLabel).join('，')}`} style={{...cardRowStyle(cards.length), '--portrait-play-width': `${Math.max(cards.length - 1, 0) * 11}px`} as React.CSSProperties}>{cards.map(c=><span className={`mini-card ${cardOf(c).suit==='H'||cardOf(c).suit==='D'||cardOf(c).rank===17?'red':''}`} key={c}><CardCorner card={c} compactJoker/></span>)}</div>}
+   {passed&&<span className="seat-pass" aria-label={`${room!.seats[seat].nickname} 不要`}>不要</span>}
+  </div>;
+ }
  function seatPanel(seat:Seat){const s=room!.seats[seat];return <div className={`seat seat${(seat-(room!.you.seat??0)+4)%4} ${!dealing&&view?.phase==='playing'&&view.turn===seat?'seat-active':''}`} key={seat}><div className="seat-info"><strong>{s.nickname||`空座位 ${seat+1}`}</strong><small>{s.kind==='human'&&!s.connected?'离线 · ':''}{view?`${dealing ? dealtCount : view.handCounts[seat]} 张${!dealing&&view.turn===seat?' · 行动中':''}`:s.kind==='bot'?(s.botKind==='coach'?'AI教练':'初级 AI'):s.kind==='human'?'已入座':'等待入座'}</small></div>{!game && s.kind==='empty' && <div className="seat-actions"><button onClick={()=>socket.emit('room:sit',{seat},ack)}>入座</button>{room!.hostId===session?.playerId&&<><button onClick={()=>socket.emit('room:addBot',{seat,botKind:'beginner'},ack)}>加AI</button><button onClick={()=>socket.emit('room:addBot',{seat,botKind:'coach'},ack)}>AI教练</button></>}</div>}{!game && s.kind==='bot'&&room!.hostId===session?.playerId&&<button onClick={()=>socket.emit('room:removeBot',{seat},ack)}>移除</button>}</div>}
  const connectionStatus=<span className={`connection-dot ${connected?'online':''}`} role="status" aria-label={connected?'已连接':'正在重连'} title={connected?'已连接':'正在重连'}/>;
  return <main className={`${view ? 'in-game' : room ? 'in-room' : ''}${sixRowLayout ? ' six-row-layout' : ''}`}>{view?.phase==='matchOver'&&view.matchWinner===view.seat%2&&room?.seats[view.seat].kind==='human'&&<Fireworks/>}{error&&<div role="alert" className="error" onClick={()=>setError('')}>{error} ×</div>}
