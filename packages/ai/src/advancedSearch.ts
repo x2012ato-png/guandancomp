@@ -4,7 +4,7 @@ import {
   type CardId, type GameState, type PlayerView, type Seat,
 } from '@guandan/engine';
 import { randomDeterminizer } from './determinize.ts';
-import { choosePlay, createHeuristicPolicy, DEFAULT_HEURISTIC, generateTacticalPlays, type HeuristicTrace } from './heuristic.ts';
+import { choosePlay, createHeuristicPolicy, DEFAULT_HEURISTIC, generateTacticalPlays, partnerSingleHasNoUnknownHigher, type HeuristicTrace } from './heuristic.ts';
 import { planHand } from './handPlan.ts';
 import { fullHousePairCost } from './fullHouseCost.ts';
 import { earlyWildCost } from './wildCost.ts';
@@ -83,7 +83,8 @@ function key(decision: AIDecision): string {
 }
 
 function candidates(view: PlayerView, fallback: AIDecision, useTactics: boolean): AIDecision[] {
-  const plays = generateTacticalPlays(view, view.trick?.lastPlay?.play.combo).candidates;
+  const generated = generateTacticalPlays(view, view.trick?.lastPlay?.play.combo).candidates;
+  const plays = partnerSingleHasNoUnknownHigher(view) ? generated.filter(play => play.cards.length === view.myHand.length) : generated;
   const choices: AIDecision[] = [fallback];
   const add = (d: AIDecision | undefined) => {
     if (d && choices.length < MAX_CANDIDATES && !choices.some(c => key(c) === key(d))) choices.push(d);

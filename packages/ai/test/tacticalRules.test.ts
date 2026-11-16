@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { interpret, makeRules, reduce, toPlayerView, type Combo, type Play, type PlayerView } from '@guandan/engine';
 import { analyzeAdvancedPlay } from '../src/advanced.ts';
 import { choosePlay, DEFAULT_HEURISTIC, type HeuristicTrace } from '../src/heuristic.ts';
+import { searchAdvancedWithInfo } from '../src/advancedSearch.ts';
 import { tacticalAdjustments, tacticalContext, type TacticalContext } from '../src/tactics.ts';
 import { cards, playingState } from '../../engine/test/helpers.ts';
 
@@ -148,6 +149,30 @@ describe('口诀战术覆盖', () => {
     const result = analyzeAdvancedPlay(toPlayerView(state, 0), { search: false })!;
     expect(result.decision.type === 'play' && result.decision.play.combo.key).toBe(17);
     expect(result.reasons.join(' ')).toContain('队友仍有多张牌');
+  });
+
+  it('队友出小王且自己持有两张大王时，基础策略和全阶段搜索都保留队友牌权', () => {
+    const hand = cards('BJ BJ SJ S3 D3 C3 S4 D4 C4 S5 D6 C7 S8 D9');
+    const last = interpret([106], 2, makeRules())[0]!;
+    const base = toPlayerView(playingState([hand, [], [], []]), 0);
+    const playedCards = [106, ...Array.from({ length: 108 }, (_, id) => id)
+      .filter(id => id !== 106 && !hand.includes(id)).slice(0, 55)];
+    const v = { ...base, handCounts: [14, 6, 13, 19] as const, playedCards,
+      trick: { leader: 2 as const, lastPlay: { seat: 2 as const, play: last }, passed: [1 as const], history: [] } };
+    const decision = choosePlay(v, { ...DEFAULT_HEURISTIC, advanced: true });
+    expect(decision).toEqual({ type: 'pass' });
+    expect(searchAdvancedWithInfo(v, decision, { deadline: Date.now() + 5000 }, true).decision).toEqual({ type: 'pass' });
+    expect(analyzeAdvancedPlay(v, { allPhases: true }, { deadline: Date.now() + 5000 })?.decision).toEqual({ type: 'pass' });
+  });
+
+  it('队友单张没有更大的未知牌时，自己仍可一手走完', () => {
+    const hand = cards('BJ');
+    const last = play('SJ', 'single');
+    const base = toPlayerView(playingState([hand, cards('S3 S4'), cards('S5 S6'), cards('S7 S8')]), 0);
+    const v = { ...base, playedCards: [52, 107],
+      trick: { leader: 2 as const, lastPlay: { seat: 2 as const, play: last }, passed: [], history: [] } };
+    const result = analyzeAdvancedPlay(v, { allPhases: true }, { deadline: Date.now() + 5000 })!;
+    expect(result.decision.type === 'play' && result.decision.play.cards).toEqual(hand);
   });
 
   it('出牌与不要的公开历史跨轮保留，新局重置', () => {

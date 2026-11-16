@@ -9,6 +9,7 @@
 import {
   cardPower,
   BIG_JOKER,
+  DECK_SIZE,
   generatePlays,
   isBomb,
   bombTier,
@@ -67,6 +68,17 @@ function strength(c: Combo): number {
 function without(hand: readonly CardId[], cards: readonly CardId[]): CardId[] {
   const s = new Set(cards);
   return hand.filter((c) => !s.has(c));
+}
+
+/** 队友仍在牌局中，且对手无法用更大的单张压住其当前单张。炸弹仍可能改变牌权。 */
+export function partnerSingleHasNoUnknownHigher(view: PlayerView): boolean {
+  const last = view.trick?.lastPlay;
+  if (!last || last.seat !== partnerOf(view.seat) || view.handCounts[last.seat] === 0 || last.play.combo.type !== 'single') return false;
+  const visible = new Set([...view.myHand, ...view.playedCards, ...last.play.cards]);
+  for (let card = 0; card < DECK_SIZE; card++) {
+    if (!visible.has(card) && cardPower(card, view.level) > last.play.combo.key) return false;
+  }
+  return true;
 }
 
 /** 出这手牌对剩余手牌结构的破坏程度 */
@@ -175,6 +187,7 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
 
   // 不压队友
   if (teamOf(lp.seat) === teamOf(me)) {
+    if (partnerSingleHasNoUnknownHigher(view)) return { type: 'pass' };
     // 己方牌力强、队友手牌尚多且对手接近走完时，考虑用可控单张接管。
     if (tactics?.mode === 'race' && lp.play.combo.type === 'single' && partnerCount >= 4 && minOpp <= 6) {
       const cover = candidates.filter(play => play.combo.type === 'single' && play.combo.key === BIG_JOKER)
