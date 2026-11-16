@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { interpret, makeDeck, makeRules } from '@guandan/engine';
 import { cards } from '../../engine/test/helpers.ts';
-import { groupHand, layoutHand } from '../src/handLayout.ts';
+import { groupHand, layoutHand, orderedHand, straightFlushCards } from '../src/handLayout.ts';
 
 describe('手牌规划与布局', () => {
   it('保留每张手牌并将规划出的牌型分组', () => {
@@ -32,6 +32,31 @@ describe('手牌规划与布局', () => {
   it('可优先保留多组互不重叠的同花顺', () => {
     const hand = cards('S3 S4 S5 S6 S7 D3 D4 D5 D6 D7');
     expect(groupHand(hand, 2, makeRules(), true).filter(group => group.label === '同花顺')).toHaveLength(2);
+  });
+
+  it('六行手牌按牌力从小到大排列，级牌和大小王在末尾', () => {
+    const hand = cards('BJ S2 D3 SJ SA H2 S3');
+    const ordered = orderedHand(hand, 2);
+    expect(ordered.map(group => group.cards[0])).toEqual(cards('D3 S3 SA S2 H2 SJ BJ'));
+    const layout = layoutHand(ordered);
+    expect(layout.cards.map(card => card.card)).toEqual(ordered.flatMap(group => group.cards));
+    expect(layout.cards.map(card => card.row)).toEqual([1, 1, 1, 2, 2, 2, 2]);
+  });
+
+  it('高亮所有重叠同花顺中的牌及双副同牌，而不移动它们', () => {
+    const hand = cards('S3 S4 S4 S5 S6 S7 S8 D9');
+    const highlighted = straightFlushCards(hand, 2);
+    expect([...highlighted].sort((a, b) => a - b)).toEqual(hand.slice(0, 7).sort((a, b) => a - b));
+    expect(orderedHand(hand, 2).filter(group => group.label === '同花顺').flatMap(group => group.cards)).toHaveLength(7);
+  });
+
+  it('高亮可以补全或替代同花顺牌的逢人配，排除无关牌', () => {
+    const hand = cards('S3 S4 S5 S7 H2 H2 D9');
+    const highlighted = straightFlushCards(hand, 2);
+    expect([...highlighted].sort((a, b) => a - b)).toEqual(hand.slice(0, 6).sort((a, b) => a - b));
+    expect(straightFlushCards(cards('S3 S4 D5 C6 H2'), 2).size).toBe(0);
+    const complete = cards('S3 S4 S5 S6 S7 H2');
+    expect(straightFlushCards(complete, 2).has(complete[5]!)).toBe(true);
   });
 
   it('两排之间只在组间换行，并保留所有牌', () => {

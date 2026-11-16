@@ -1,5 +1,5 @@
 import { planHand, type GroupKind } from '@guandan/ai';
-import { generatePlays, makeRules, sortHand, type CardId, type Level, type RulesConfig } from '@guandan/engine';
+import { cardOf, generatePlays, isWild, makeRules, sortHand, SUITS, type CardId, type Level, type RulesConfig } from '@guandan/engine';
 
 export interface HandGroup {
   readonly label: string;
@@ -46,6 +46,29 @@ export function groupHand(hand: readonly CardId[], level: Level, config: RulesCo
   }
   result.push(...plan.wilds.map(card => ({ label: '逢人配', cards: [card] })));
   return result;
+}
+
+/** All cards that can participate in at least one straight flush, including duplicates and wilds. */
+export function straightFlushCards(hand: readonly CardId[], level: Level): Set<CardId> {
+  const wilds = hand.filter(card => isWild(card, level));
+  const natural = hand.filter(card => !isWild(card, level));
+  const windows = [[14, 2, 3, 4, 5], ...Array.from({length: 9}, (_, i) => Array.from({length: 5}, (_, j) => i + j + 2))];
+  const result = new Set<CardId>();
+  for (const suit of SUITS) for (const ranks of windows) {
+    const matching = natural.filter(card => { const c = cardOf(card); return c.suit === suit && ranks.includes(c.rank); });
+    const present = new Set(matching.map(card => cardOf(card).rank));
+    if (5 - present.size > wilds.length) continue;
+    for (const card of matching) result.add(card);
+    // A wild can also replace a present rank when no rank is missing.
+    for (const card of wilds) result.add(card);
+  }
+  return result;
+}
+
+/** Sort by increasing card strength without grouping, highlighting all possible straight flush cards. */
+export function orderedHand(hand: readonly CardId[], level: Level): HandGroup[] {
+  const highlighted = straightFlushCards(hand, level);
+  return sortHand(hand, level).reverse().map(card => ({ label: highlighted.has(card) ? '同花顺' : '', cards: [card] }));
 }
 
 /** Break between groups near the midpoint so portrait displays at most two rows. */
