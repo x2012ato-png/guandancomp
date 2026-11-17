@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { interpret, makeDeck, makeRules } from '@guandan/engine';
+import { cardOf, interpret, makeDeck, makeRules } from '@guandan/engine';
 import { cards } from '../../engine/test/helpers.ts';
-import { groupHand, layoutHand, orderedHand, straightFlushCards } from '../src/handLayout.ts';
+import { canArrangeHand, groupHand, layoutHand, layoutSixRowHand, orderedHand, straightFlushCards } from '../src/handLayout.ts';
 
 describe('手牌规划与布局', () => {
   it('保留每张手牌并将规划出的牌型分组', () => {
@@ -41,6 +41,84 @@ describe('手牌规划与布局', () => {
     const layout = layoutHand(ordered);
     expect(layout.cards.map(card => card.card)).toEqual(ordered.flatMap(group => group.cards));
     expect(layout.cards.map(card => card.row)).toEqual([1, 1, 1, 2, 2, 2, 2]);
+  });
+
+  it('理牌支持四张及以上炸弹、王炸、顺子和逢人配组成的牌型', () => {
+    for (const text of ['S9 D9 C9 H9', 'S9 D9 C9 H9 S9', 'SJ SJ BJ BJ', 'S3 D4 C5 S6 D7', 'S3 S4 S5 S6 S7', 'S9 D9 C9 H2', 'S3 D4 C5 S6 H2']) {
+      expect(canArrangeHand(cards(text), 2, makeRules()), text).toBe(true);
+    }
+    for (const text of ['', 'S3 D4', 'S3 D4 C5 S6', 'S3 D4 C5 S6 D8']) {
+      expect(canArrangeHand(cards(text), 2, makeRules()), text).toBe(false);
+    }
+  });
+
+  it('理牌支持三不带和三带二，包括逢人配组成的牌型', () => {
+    for (const text of ['S9 D9 C9', 'S9 D9 H2', 'S3 D3 C3 S4 D4', 'S3 D3 H2 S4 D4', 'S3 D3 C3 S4 H2']) {
+      expect(canArrangeHand(cards(text), 2, makeRules()), text).toBe(true);
+    }
+    for (const text of ['S3 D3 S4', 'S3 D3 C3 S4 D5', 'S3 D3 S4 D4 S5']) {
+      expect(canArrangeHand(cards(text), 2, makeRules()), text).toBe(false);
+    }
+  });
+
+  it('手动牌序在出牌后保留，移除已出牌并保持其他牌的相对顺序', () => {
+    const hand = cards('S3 D4 C5 S6 D7 S9 D9 C9 H9');
+    const before = orderedHand(hand, 2).flatMap(group => group.cards);
+    const selected = hand.slice(5);
+    const front = before.filter(card => selected.includes(card));
+    const rest = before.filter(card => !selected.includes(card));
+    const order = [...front, ...rest];
+    expect(orderedHand(hand, 2, order).flatMap(group => group.cards)).toEqual(order);
+    const remaining = hand.filter(card => card !== front[0] && card !== rest[0]);
+    const after = orderedHand(remaining, 2, order);
+    expect(after.flatMap(group => group.cards)).toEqual(order.filter(card => remaining.includes(card)));
+    expect(after.filter(group => group.label === '同花顺').flatMap(group => group.cards)).toEqual([]);
+  });
+
+  it('整理的长炸弹完整放在第一排左侧，不从中间拆开', () => {
+    const bomb = cards('S9 D9 C9 H9 S9 D9 C9 H9');
+    const hand = [...bomb, ...cards('S3 D4 C5')];
+    const layout = layoutHand(orderedHand(hand, 2, hand), bomb.length);
+    expect(layout.cards.slice(0, bomb.length).map(item => [item.card, item.row, item.column])).toEqual(bomb.map((card, index) => [card, 1, index + 1]));
+    expect(layout.cards.slice(bomb.length).every(item => item.row === 2)).toBe(true);
+  });
+
+  it('六行布局换行时将相同点数、级牌和大小王分别留在同一行', () => {
+    const hand = cards('S3 D3 C3 S4 D4 S5 D5 S6 D6 S7 D7 S2 H2 SJ SJ BJ BJ');
+    const layout = layoutSixRowHand(orderedHand(hand, 2));
+    expect(new Set(layout.cards.map(item => item.row))).toEqual(new Set([1, 2]));
+    expect(layout.cards).toHaveLength(hand.length);
+    for (const rank of new Set(hand.map(card => cardOf(card).rank))) {
+      expect(new Set(layout.cards.filter(item => cardOf(item.card).rank === rank).map(item => item.row)).size).toBe(1);
+    }
+    expect(layout.columns).toBe(Math.max(...layout.cards.map(item => item.column)));
+  });
+
+  it('理顺子后即使同点数的牌分散，也保持整理的牌在第一行前方', () => {
+    const selected = cards('S3 S4 S5 S6 S7');
+    const other = cards('D3 D4 D5 D6 D7 S8 D8 S9 D9 S10 D10');
+    const hand = [...selected, ...other];
+    for (const current of [hand, hand.filter(card => card !== selected[1] && card !== other[2])]) {
+      const remainingFront = selected.filter(card => current.includes(card));
+      const layout = layoutSixRowHand(orderedHand(current, 2, hand), remainingFront.length);
+      expect(layout.cards.slice(0, remainingFront.length).map(item => item.card)).toEqual(remainingFront);
+      expect(layout.cards.slice(0, remainingFront.length).every(item => item.row === 1)).toBe(true);
+      for (const rank of new Set(current.map(card => cardOf(card).rank))) {
+        expect(new Set(layout.cards.filter(item => cardOf(item.card).rank === rank).map(item => item.row)).size).toBe(1);
+      }
+    }
+  });
+
+  it('整理牌覆盖所有点数时仍尽量使用两行，全部同点数时保留一行', () => {
+    const bomb = cards('S9 D9 C9 H9 S9 D9 C9 H9');
+    expect(layoutSixRowHand(orderedHand(bomb, 2)).cards.every(item => item.row === 1)).toBe(true);
+    const hand = cards('S3 S4 S5 S6 S7 D3 D4 D5 D6 D7');
+    const layout = layoutSixRowHand(orderedHand(hand, 2, hand), 5);
+    expect(new Set(layout.cards.map(item => item.row))).toEqual(new Set([1, 2]));
+    for (const rank of new Set(hand.map(card => cardOf(card).rank))) {
+      expect(new Set(layout.cards.filter(item => cardOf(item.card).rank === rank).map(item => item.row)).size).toBe(1);
+    }
+    expect(layoutSixRowHand([])).toEqual({ cards: [], columns: 0 });
   });
 
   it('高亮所有重叠同花顺中的牌及双副同牌，而不移动它们', () => {

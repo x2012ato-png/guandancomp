@@ -1,5 +1,5 @@
 import { planHand, type GroupKind } from '@guandan/ai';
-import { cardOf, generatePlays, isWild, makeRules, sortHand, SUITS, type CardId, type Level, type RulesConfig } from '@guandan/engine';
+import { cardOf, generatePlays, interpret, isWild, makeRules, sortHand, SUITS, type CardId, type Level, type RulesConfig } from '@guandan/engine';
 
 export interface HandGroup {
   readonly label: string;
@@ -66,13 +66,49 @@ export function straightFlushCards(hand: readonly CardId[], level: Level): Set<C
 }
 
 /** Sort by increasing card strength without grouping, highlighting all possible straight flush cards. */
-export function orderedHand(hand: readonly CardId[], level: Level): HandGroup[] {
+export function orderedHand(hand: readonly CardId[], level: Level, preferredOrder: readonly CardId[] = []): HandGroup[] {
   const highlighted = straightFlushCards(hand, level);
-  return sortHand(hand, level).reverse().map(card => ({ label: highlighted.has(card) ? '同花顺' : '', cards: [card] }));
+  const retained = [...new Set(preferredOrder)].filter(card => hand.includes(card));
+  const ordered = [...retained, ...sortHand(hand, level).reverse().filter(card => !retained.includes(card))];
+  return ordered.map(card => ({ label: highlighted.has(card) ? '同花顺' : '', cards: [card] }));
+}
+
+/** Arrangement is independent of whose turn it is and the last play to beat. */
+export function canArrangeHand(selected: readonly CardId[], level: Level, config: RulesConfig): boolean {
+  return selected.length >= 3 && interpret(selected, level, config).some(play =>
+    ['triple', 'fullHouse', 'bomb', 'jokerBomb', 'straight', 'straightFlush'].includes(play.combo.type));
+}
+
+/** Keep every printed rank on one row while preserving the order within each row. */
+export function layoutSixRowHand(groups: readonly HandGroup[], firstRowMinimum = 0): { cards: HandLayoutCard[]; columns: number } {
+  const entries = groups.flatMap((group, groupIndex) => group.cards.map(card => ({ card, group: groupIndex, label: group.label })));
+  const ranks = [...new Set(entries.map(entry => cardOf(entry.card).rank))];
+  const requiredRanks = new Set(entries.slice(0, firstRowMinimum).map(entry => cardOf(entry.card).rank));
+  let firstRowRanks = new Set(ranks);
+  // Prefer keeping the arranged cards on the first row, but use both rows when
+  // that is impossible without placing every rank on the first row.
+  for (const requireFront of [true, false]) {
+    let best = Infinity;
+    for (let count = 1; count < ranks.length; count++) {
+      const candidate = new Set(ranks.slice(0, count));
+      if (requireFront && [...requiredRanks].some(rank => !candidate.has(rank))) continue;
+      const firstCount = entries.filter(entry => candidate.has(cardOf(entry.card).rank)).length;
+      const difference = Math.abs(entries.length - 2 * firstCount);
+      if (difference < best) { best = difference; firstRowRanks = candidate; }
+    }
+    if (best < Infinity) break;
+  }
+  const first = entries.filter(entry => firstRowRanks.has(cardOf(entry.card).rank));
+  const second = entries.filter(entry => !firstRowRanks.has(cardOf(entry.card).rank));
+  return {
+    cards: [...first.map((entry, index) => ({ ...entry, row: 1, column: index + 1 })),
+      ...second.map((entry, index) => ({ ...entry, row: 2, column: index + 1 }))],
+    columns: Math.max(first.length, second.length),
+  };
 }
 
 /** Break between groups near the midpoint so portrait displays at most two rows. */
-export function layoutHand(groups: readonly HandGroup[]): { cards: HandLayoutCard[]; columns: number } {
+export function layoutHand(groups: readonly HandGroup[], firstRowMinimum = 0): { cards: HandLayoutCard[]; columns: number } {
   const total = groups.reduce((sum, group) => sum + group.cards.length, 0);
   let firstRow = total;
   if (groups.length > 1) {
@@ -80,6 +116,7 @@ export function layoutHand(groups: readonly HandGroup[]): { cards: HandLayoutCar
     let best = Infinity;
     for (let i = 0; i < groups.length - 1; i++) {
       count += groups[i]!.cards.length;
+      if (count < firstRowMinimum) continue;
       const difference = Math.abs(total - 2 * count);
       if (difference < best) { best = difference; firstRow = count; }
     }
