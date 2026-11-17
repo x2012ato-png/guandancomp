@@ -79,24 +79,25 @@ export function canArrangeHand(selected: readonly CardId[], level: Level, config
     ['triple', 'fullHouse', 'bomb', 'jokerBomb', 'straight', 'straightFlush'].includes(play.combo.type));
 }
 
-/** Keep every printed rank on one row while preserving the order within each row. */
-export function layoutSixRowHand(groups: readonly HandGroup[], firstRowMinimum = 0): { cards: HandLayoutCard[]; columns: number } {
+/** Keep printed ranks and manually arranged groups together while preserving their order. */
+export function layoutSixRowHand(groups: readonly HandGroup[], firstRowMinimum = 0, arrangedGroups: readonly (readonly CardId[])[] = []): { cards: HandLayoutCard[]; columns: number } {
   const entries = groups.flatMap((group, groupIndex) => group.cards.map(card => ({ card, group: groupIndex, label: group.label })));
   const ranks = [...new Set(entries.map(entry => cardOf(entry.card).rank))];
   const requiredRanks = new Set(entries.slice(0, firstRowMinimum).map(entry => cardOf(entry.card).rank));
   let firstRowRanks = new Set(ranks);
-  // Prefer keeping the arranged cards on the first row, but use both rows when
-  // that is impossible without placing every rank on the first row.
-  for (const requireFront of [true, false]) {
+  if (entries.length >= 14) {
     let best = Infinity;
     for (let count = 1; count < ranks.length; count++) {
       const candidate = new Set(ranks.slice(0, count));
-      if (requireFront && [...requiredRanks].some(rank => !candidate.has(rank))) continue;
+      if ([...requiredRanks].some(rank => !candidate.has(rank))) continue;
+      if (arrangedGroups.some(group => {
+        const rows = new Set(group.filter(card => entries.some(entry => entry.card === card)).map(card => candidate.has(cardOf(card).rank)));
+        return rows.size > 1;
+      })) continue;
       const firstCount = entries.filter(entry => candidate.has(cardOf(entry.card).rank)).length;
       const difference = Math.abs(entries.length - 2 * firstCount);
       if (difference < best) { best = difference; firstRowRanks = candidate; }
     }
-    if (best < Infinity) break;
   }
   const first = entries.filter(entry => firstRowRanks.has(cardOf(entry.card).rank));
   const second = entries.filter(entry => !firstRowRanks.has(cardOf(entry.card).rank));

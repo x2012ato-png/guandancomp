@@ -111,7 +111,7 @@ function App() {
   if(!view)return layoutHand([]);
   const cards=handKey ? handKey.split(',').map(Number) : [];
   const groups=dealing ? sortHand(cards,view.level).map(card=>({label:'',cards:[card]})) : orderedSixRowLayout ? orderedHand(cards,view.level,orderedSixRowHand ? arrangement.order : []).map(group=>orderedSixRowHand ? group : {...group,label:''}) : groupHand(cards,view.level,view.config,view.phase==='playing');
-  return sixRowLayout && mobilePortrait ? layoutSixRowHand(groups,orderedSixRowHand ? arrangement.front.filter(card=>cards.includes(card)).length : 0) : layoutHand(groups);
+  return sixRowLayout && mobilePortrait ? layoutSixRowHand(groups,orderedSixRowHand ? arrangement.front.filter(card=>cards.includes(card)).length : 0,orderedSixRowHand ? arrangement.groups : []) : layoutHand(groups);
  },[handKey,view?.level,view?.config,view?.phase,!!dealing,sixRowLayout,mobilePortrait,orderedSixRowLayout,orderedSixRowHand,arrangement]);
  const raisedArrangedCards=useMemo(()=>{
   const hand=new Set(handKey ? handKey.split(',').map(Number) : []);

@@ -109,16 +109,35 @@ describe('手牌规划与布局', () => {
     }
   });
 
-  it('整理牌覆盖所有点数时仍尽量使用两行，全部同点数时保留一行', () => {
+  it('少于 14 张时全部放在一行，包括手动整理后及出牌后的手牌', () => {
+    const hand = cards('S3 S4 S5 S6 S7 D9 D10 SJ BJ S8 D8 S9 D9');
+    for (const current of [hand, hand.slice(0, 7)]) {
+      const layout = layoutSixRowHand(orderedHand(current, 2, hand), 5, [hand.slice(0, 5)]);
+      expect(layout.cards.map(item => item.card)).toEqual(current);
+      expect(layout.cards.every(item => item.row === 1)).toBe(true);
+      expect(layout.columns).toBe(current.length);
+    }
+  });
+
+  it('14 张起可分两行，无法同时保留整理牌和同点数时保留一行', () => {
     const bomb = cards('S9 D9 C9 H9 S9 D9 C9 H9');
     expect(layoutSixRowHand(orderedHand(bomb, 2)).cards.every(item => item.row === 1)).toBe(true);
-    const hand = cards('S3 S4 S5 S6 S7 D3 D4 D5 D6 D7');
-    const layout = layoutSixRowHand(orderedHand(hand, 2, hand), 5);
-    expect(new Set(layout.cards.map(item => item.row))).toEqual(new Set([1, 2]));
-    for (const rank of new Set(hand.map(card => cardOf(card).rank))) {
-      expect(new Set(layout.cards.filter(item => cardOf(item.card).rank === rank).map(item => item.row)).size).toBe(1);
-    }
+    const hand = cards('S3 S4 S5 S6 S7 D3 D4 D5 D6 D7 C3 C4 C5 C6 C7');
+    const layout = layoutSixRowHand(orderedHand(hand, 2, hand), 5, [hand.slice(0, 5)]);
+    expect(layout.cards.every(item => item.row === 1)).toBe(true);
+    const fourteen = cards('S3 D3 S4 D4 S5 D5 S6 D6 S7 D7 S8 D8 S9 D9');
+    expect(new Set(layoutSixRowHand(orderedHand(fourteen, 2)).cards.map(item => item.row))).toEqual(new Set([1, 2]));
     expect(layoutSixRowHand([])).toEqual({ cards: [], columns: 0 });
+  });
+
+  it('再次理牌后，之前整理的同花顺也不会被换行拆开', () => {
+    const front = cards('S3 D3 C3');
+    const flush = cards('S4 S5 S6 S7 S8');
+    const hand = [...front, ...flush, ...cards('S9 D9 S10 D10 SJ DJ SQ DQ')];
+    const layout = layoutSixRowHand(orderedHand(hand, 2, hand), front.length, [front, flush]);
+    expect(new Set(layout.cards.map(item => item.row))).toEqual(new Set([1, 2]));
+    expect(new Set(layout.cards.filter(item => flush.includes(item.card)).map(item => item.row)).size).toBe(1);
+    expect(layout.cards.slice(0, front.length).map(item => item.card)).toEqual(front);
   });
 
   it('高亮所有重叠同花顺中的牌及双副同牌，而不移动它们', () => {
