@@ -94,7 +94,7 @@ function chooseEndgameLead(view: PlayerView, useTactics = true): { play: Play; s
     if (play.combo.type === 'single') {
       const higher = unseenHigherSingles(view, play.combo.key);
       // 对手只剩一张时，优先避免给其接单张的机会。
-      if (minOpp === 1 && higher > 0) { score += 12; adjustments.push(`对手仅剩 1 张，仍有 ${higher} 张更大的未知单牌 +12`); }
+      if (minOpp === 1 && higher > 0) { score += 40; adjustments.push(`对手仅剩 1 张，仍有 ${higher} 张更大的未知单牌 +40`); }
       // 未见到更大的单牌时，平时尽量留下控牌。
       if (minOpp > 2 && higher === 0) { score += 2; adjustments.push('无更大未知单牌，保留控牌 +2'); }
       score += play.combo.key / 50;

@@ -4,7 +4,7 @@ import {
   type CardId, type GameState, type PlayerView, type Seat,
 } from '@guandan/engine';
 import { randomDeterminizer } from './determinize.ts';
-import { choosePlay, createHeuristicPolicy, DEFAULT_HEURISTIC, generateTacticalPlays, partnerSingleHasNoUnknownHigher, type HeuristicTrace } from './heuristic.ts';
+import { choosePlay, createHeuristicPolicy, DEFAULT_HEURISTIC, generateTacticalPlays, type HeuristicTrace } from './heuristic.ts';
 import { planHand } from './handPlan.ts';
 import { fullHousePairCost } from './fullHouseCost.ts';
 import { earlyWildCost } from './wildCost.ts';
@@ -84,9 +84,14 @@ function key(decision: AIDecision): string {
 
 function candidates(view: PlayerView, fallback: AIDecision, useTactics: boolean): AIDecision[] {
   const generated = generateTacticalPlays(view, view.trick?.lastPlay?.play.combo).candidates;
-  const plays = partnerSingleHasNoUnknownHigher(view) ? generated.filter(play => play.cards.length === view.myHand.length) : generated;
+  const last = view.trick?.lastPlay;
+  const partnerLeads = !!last && teamOf(last.seat) === teamOf(view.seat);
+  // 接管队友必须由基础策略确认救急或控牌条件，不能由随机分牌的收益绕过。
+  // fallback 已保留该类接管；额外候选仅允许一手走完。
+  const plays = partnerLeads ? generated.filter(play => play.cards.length === view.myHand.length) : generated;
   const choices: AIDecision[] = [fallback];
   const add = (d: AIDecision | undefined) => {
+    if (partnerLeads && d?.type === 'play' && d.play.cards.length !== view.myHand.length) return;
     if (d && choices.length < MAX_CANDIDATES && !choices.some(c => key(c) === key(d))) choices.push(d);
   };
   if (view.trick?.lastPlay) add({ type: 'pass' });

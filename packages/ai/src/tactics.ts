@@ -1,6 +1,6 @@
 /** 口诀对应的战术倾向。只使用自己的手牌和公开信息，分值是可被局面推翻的偏好。 */
 import {
-  BIG_JOKER, SMALL_JOKER, cardOf, cardPower, isBomb, nextSeat, partnerOf, teamOf,
+  BIG_JOKER, SMALL_JOKER, cardOf, cardPower, generatePlays, isBomb, nextSeat, partnerOf, teamOf,
   type Combo, type Play, type PlayerView, type TrickEntry,
 } from '@guandan/engine';
 import { planHand } from './handPlan.ts';
@@ -82,9 +82,16 @@ export function tacticalAdjustments(view: PlayerView, play: Play, context: Tacti
     if (context.mode === 'support' && c.key >= 13 && !isBomb(c) && !immediateSingleThreat) add('weak_high', '牌力偏弱，可用较大牌争取节奏', -1.5);
     const used = new Set(play.cards);
     const remaining = view.myHand.filter(id => !used.has(id));
+    if (isBomb(c) && remaining.length > 1 && remaining.length <= 8 &&
+        remaining.some(id => cardPower(id, view.level) < 15)) {
+      const continuations = generatePlays(remaining, view.level, view.config);
+      if (!continuations.some(next => next.cards.length === remaining.length || isBomb(next.combo))) {
+        add('retain_bomb_control', '先出炸弹后余牌仍需多手且有弱牌，保留炸弹用于收回牌权', 24);
+      }
+    }
     const remainingControls = remaining.filter(id => cardPower(id, view.level) >= 15).length;
-    const retainedBomb = c.type !== 'single' && !isBomb(c) && remainingControls === 0 && remaining.length >= 4 && planHand(remaining, view.level).bombs.length > 0;
-    if (c.type === 'single' && c.key <= 10 && remainingControls > 0) add('retain_control', '出小单后仍保留大牌，可尝试收回牌权', -2);
+    const retainedBomb = !isBomb(c) && remainingControls === 0 && remaining.length >= 4 && planHand(remaining, view.level).bombs.length > 0;
+    if (c.type === 'single' && c.key <= 10 && (remainingControls > 0 || retainedBomb)) add('retain_control', '出小单后仍保留大牌或炸弹，可尝试收回牌权', -2);
     if (c.type !== 'single' && !isBomb(c) && (remainingControls > 0 || retainedBomb)) add('retain_control', '出牌后保留大牌或炸弹，可尝试重新争取牌权', -1.5);
     if (c.type === 'single' && c.key <= 10 && context.controlCards === 0 && context.mode !== 'race' && !immediateSingleThreat) add('no_control', '缺少明显控牌，小单失去牌权的风险较高', 2);
     if (c.type !== 'single' && !isBomb(c) && remainingControls === 0 && !retainedBomb && context.mode === 'support') add('no_control', '余牌缺少明显控牌，主动出牌后可能难以收回', 1.5);
