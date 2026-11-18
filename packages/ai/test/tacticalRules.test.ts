@@ -140,15 +140,24 @@ describe('口诀战术覆盖', () => {
     expect(analyzeAdvancedPlay(partnerView, { search: false })?.decision).toEqual({ type: 'pass' });
   });
 
-  it('牌力较强、队友牌多且对手将走完时，可以用大王接队友单张', () => {
+  it('牌力较强、队友牌多且对手将走完时，可以用大王接队友小王', () => {
     const hand = cards('BJ S2 D2 C2 S3 D3 C3 S5 D6');
-    const last = play('S4', 'single');
+    const last = play('SJ', 'single');
     const state = playingState([hand, cards('SA DA CA SK DK'), cards('S6 S7 S8 S9 S10'), cards('H3 H4 H5 H6 H7')], {
       trick: { leader: 2, lastPlay: { seat: 2, play: last }, passed: [], history: [] },
     });
     const result = analyzeAdvancedPlay(toPlayerView(state, 0), { search: false })!;
     expect(result.decision.type === 'play' && result.decision.play.combo.key).toBe(17);
     expect(result.reasons.join(' ')).toContain('队友仍有多张牌');
+  });
+
+  it('接队友时有更小的可管单张，不越级使用大王', () => {
+    const hand = cards('BJ SJ S2 D2 C2 S3 D3 C3 S5 D6');
+    const last = play('S4', 'single');
+    const state = playingState([hand, cards('SA DA CA SK DK'), cards('S6 S7 S8 S9 S10'), cards('H3 H4 H5 H6 H7')], {
+      trick: { leader: 2, lastPlay: { seat: 2, play: last }, passed: [], history: [] },
+    });
+    expect(analyzeAdvancedPlay(toPlayerView(state, 0), { search: false })!.decision).toEqual({ type: 'pass' });
   });
 
   it('队友出小王且自己持有两张大王时，基础策略和全阶段搜索都保留队友牌权', () => {

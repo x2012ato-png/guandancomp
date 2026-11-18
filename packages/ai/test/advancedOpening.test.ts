@@ -6,7 +6,7 @@ import { choosePlay, DEFAULT_HEURISTIC } from '../src/heuristic.ts';
 import { cards, playingState } from '../../engine/test/helpers.ts';
 
 describe('高级策略的开局与跟牌', () => {
-  it('跟三带二时比较同点数的不同花色，保留同花顺', () => {
+  it('最小三带二需拆同花顺时不越级跟更大的三带二', () => {
     const hand = cards('S5 S6 S7 S8 S9 H10 D10 C10 D5 C5 SQ DK');
     const previous = interpret(cards('S3 D3 C3 S4 D4'), 2, makeRules()).find(p => p.combo.type === 'fullHouse')!;
     const state = playingState([hand, cards('SA DA CA HJ'), cards('SK DK'), cards('H7 H8 H9 H10 HJ HQ')], {
@@ -14,7 +14,7 @@ describe('高级策略的开局与跟牌', () => {
     });
     const result = analyzeAdvancedPlay(toPlayerView(state, 0), { search: false })!;
     expect(result.decision.type).toBe('play');
-    if (result.decision.type === 'play') expect(result.decision.play.cards.some(id => cards('S5 S6 S7 S8 S9').includes(id))).toBe(false);
+    if (result.decision.type === 'play') expect(result.decision.play.combo.type).toBe('straightFlush');
   });
 
   it('跟牌时也保护逢人配可组成的同花顺', () => {
@@ -36,16 +36,16 @@ describe('高级策略的开局与跟牌', () => {
     if (result.decision.type === 'play') expect(result.decision.play.cards).toEqual(cards('D5'));
   });
 
-  it('手牌较多且上家出小王时考虑大王夺取出牌权', () => {
-    const hand = cards('BJ BJ S3 D4 C5 S6 D7 S8 D9 C10 C8 SQ SK SA D3 D5 D6 D8 D10 DJ DQ DK DA C3 C4 C6 C7');
+  it('手牌较多且上家出小王时，仍可用单张大王争取出牌权', () => {
+    const hand = cards('BJ S3 D4 C5 S6 D7 S8 D9 C10 SQ');
     const previous = interpret(cards('SJ'), 2, makeRules())[0]!;
-    const state = playingState([hand, cards('H3 H4 H5 H6 H7 H8 H9 H10'), cards('C8 C9 C10 CJ CQ CK CA'), cards('H3 H4 H5 H6 H7 H8 H9 H10 HQ')], {
+    const state = playingState([hand, cards('H3 H4 H5 H6 H7 H8 H9 H10 HJ HQ'), cards('C8 C9 C10 CJ CQ CK CA'), cards('H3 H4 H5 H6 H7 H8 H9 H10 HJ HQ')], {
       trick: { leader: 3, lastPlay: { seat: 3, play: previous }, passed: [], history: [] }, playedCards: cards('SJ'),
     });
     const result = analyzeAdvancedPlay(toPlayerView(state, 0), { search: false })!;
     expect(result.decision.type).toBe('play');
     if (result.decision.type === 'play') expect(result.decision.play.combo.key).toBe(17);
-    expect(result.reasons.join(' ')).toContain('大王取得单张控制机会');
+    expect(result.reasons.join(' ')).toContain('最小同型牌');
   });
 
   it('完整发牌后可对相同样本比较候选出法，过期预算回退', () => {

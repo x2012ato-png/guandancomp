@@ -60,9 +60,10 @@ function protectPartner(view: PlayerView): Play | null {
       last.play.combo.type !== 'single' || view.handCounts[next] !== 1 ||
       view.trick?.passed.includes(next) || unseenHigherSingles(view, last.play.combo.key) === 0) return null;
   // 下一家只有一张牌时，保留一张没有更大未知单牌的牌可阻止其立即走完。
-  return generatePlays(view.myHand, view.level, view.config, last.play.combo)
-    .filter(play => play.combo.type === 'single' && unseenHigherSingles(view, play.combo.key) === 0)
-    .sort((a, b) => a.combo.key - b.combo.key)[0] ?? null;
+  const singles = generatePlays(view.myHand, view.level, view.config, last.play.combo)
+    .filter(play => play.combo.type === 'single').sort((a, b) => a.combo.key - b.combo.key);
+  const smallest = singles[0];
+  return smallest && unseenHigherSingles(view, smallest.combo.key) === 0 ? smallest : null;
 }
 
 interface EndgameScore { play: Play; turns: number; score: number; adjustments: string[] }
@@ -136,19 +137,19 @@ function heuristicExplanation(trace: HeuristicTrace, view: PlayerView, decision:
       `当前牌力粗估为${tacticalContext(view).mode === 'race' ? '有争先条件' : tacticalContext(view).mode === 'support' ? '偏弱，重视配合' : '中等'}；这是根据自己的控牌和余牌估算，不能确定名次。余牌结构变化包含小单张代价，炸弹和逢人配另算；各家剩牌和队友公开出牌会影响战术偏好。`,
     ];
   }
-  const nonBomb = scores.filter(item => !isBomb(item.play.combo));
+  const nonBomb = scores.filter(item => !isBomb(item.play.combo) && !item.overbid);
   const bombs = scores.filter(item => isBomb(item.play.combo));
   const best = nonBomb[0];
   const lastCount = view.handCounts[view.trick!.lastPlay!.seat];
   const oppCounts = [nextSeat(view.seat), nextSeat(partnerOf(view.seat))].map(seat => view.handCounts[seat]).filter(count => count > 0);
   const minOpp = oppCounts.length ? Math.min(...oppCounts) : Infinity;
   const context = `上家剩 ${lastCount} 张${Number.isFinite(minOpp) ? `，仍在牌局中的对手最少剩 ${minOpp} 张` : ''}，${trace.danger ? '触发拦截' : '未触发拦截'}${trace.partnerCaution ? '；自己牌力偏弱且队友仍有机会跟牌，倾向让队友接牌' : ''}，普通跟牌代价上限为 ${trace.limit} 分`;
-  const comparison = best ? `最便宜的普通跟牌是 ${playName(best.play)}，代价 ${formatScore(best.cost)} 分（${best.details!.join('，')}）${nonBomb[1] ? `；另一种 ${playName(nonBomb[1].play)} 为 ${formatScore(nonBomb[1].cost)} 分（${nonBomb[1].details!.join('，')}）` : ''}` : '没有能压过当前牌的普通牌型';
+  const comparison = best ? `最小同型普通跟牌中代价最低的是 ${playName(best.play)}，代价 ${formatScore(best.cost)} 分（${best.details!.join('，')}）${nonBomb[1] ? `；另一种 ${playName(nonBomb[1].play)} 为 ${formatScore(nonBomb[1].cost)} 分（${nonBomb[1].details!.join('，')}）` : ''}${best.protectedLoss && best.cost > 14 ? '；该普通跟法会拆散炸弹或同花顺，超过保护阈值' : ''}` : '没有能压过当前牌的普通牌型';
   const tactics = tacticalContext(view);
   const bomb = bombs[0] ? `；最便宜炸弹为 ${playName(bombs[0].play)}，代价 ${formatScore(bombs[0].cost)} 分（${bombs[0].details!.join('，')}）${tactics.firstOpponentStraight ? '，对手首次出顺子可考虑拦截' : lastCount === 4 && !trace.nearlyDone && minOpp > 2 ? '，上家剩 4 张且局势未到紧急程度，优先保留炸弹' : trace.danger || trace.nearlyDone ? '，符合用炸条件' : '，但当前未满足用炸条件'}` : '；没有可用炸弹';
   return [
     `${context}。${comparison}${bomb}，因此${decision.type === 'pass' ? '选择不要' : `选择 ${playName(decision.play)}`}。`,
-    '普通跟牌和炸弹分别比较拆牌、牌力和控牌代价；对手首次出顺子或剩 5 张时可优先考虑拦截，剩 4 张时通常更谨慎，仍会结合我方余牌和其他对手的威胁。',
+    '普通跟牌优先比较能够管住的最小同型牌，代价过高时可以让牌；炸弹另行比较。对手首次出顺子或剩 5 张时可考虑拦截，剩 4 张时通常更谨慎。',
   ];
 }
 
@@ -208,6 +209,8 @@ export function analyzeAdvancedPlay(view: PlayerView, options: AdvancedOptions =
       reasons.push(`本手调整明细：${search.scores.map(item => `${decisionName(item.decision)}：${item.adjustmentDetails.length ? item.adjustmentDetails.map(detail => `${detail.text} ${detail.value >= 0 ? '+' : ''}${formatScore(detail.value)}`).join('，') : '无调整'}，合计 ${item.adjustment >= 0 ? '+' : ''}${formatScore(item.adjustment)}`).join('；')}。战术代价按 −0.005 倍换算为模拟分。`);
       const earlyGame = view.handCounts.reduce((a, b) => a + b, 0) > 18;
       reasons.push(`调整基础建议的条件：${earlyGame ? '至少 4 组样本，且至少 80% 的样本优于基础建议，平均优势至少 0.08 分' : '至少 3 组样本，且至少 75% 的样本优于基础建议，平均优势至少 0.04 分'}。${search.scores.slice(1).map(item => `${decisionName(item.decision)}：${item.winsAgainstFallback}/${search.samples} 组优于基础建议，平均差 ${formatScore(item.average - search.scores[0]!.average)} 分`).join('；')}。`);
+      const overbids = search.scores.filter(item => item.overbid);
+      if (overbids.length) reasons.push(`普通跟牌越级还须至少 8 组样本中有 90% 显示自己连续出完并拿头游：${overbids.map(item => `${decisionName(item.decision)} ${item.uninterruptedFinishes}/${search.samples} 组`).join('；')}。模拟结果不代表真实概率。`);
       const exampleScores = search.changed ? [search.scores[0]!, search.scores.find(item => item.decision === search.decision)!] : [search.scores[0]!];
       for (const item of exampleScores) {
         const example = item.example;
@@ -228,7 +231,7 @@ export function analyzeAdvancedPlay(view: PlayerView, options: AdvancedOptions =
         }
       }
       if (options.adoptSearch === false && !search.changed) reasons.push('模拟仅供参考，不会自动改变基础建议。');
-      if (search.scores.some(item => item.adjustment !== 0)) reasons.push('模拟评分还计入保留同花顺、逢人配和控牌对子，以及大王控牌和当前局面的口诀战术偏好；这些只是加减分，并非必然结果。');
+      if (search.scores.some(item => item.adjustment !== 0)) reasons.push('模拟评分还计入保留同花顺、逢人配和控牌对子，以及当前局面的口诀战术偏好；这些只是加减分，并非必然结果。');
       if (view.previousTrick?.lastPlay && view.trick?.lastPlay && view.previousTrick.lastPlay.play.combo.type === view.trick.lastPlay.play.combo.type &&
           teamOf(view.previousTrick.lastPlay.seat) !== teamOf(view.seat) && view.previousTrick.passed.includes(partnerOf(view.seat)) && view.handCounts[partnerOf(view.seat)] > 0) {
         reasons.push('队友上轮对同类牌选择不要，采样时降低了其当时能用普通牌跟上的可能性；不要也可能是战术选择，不能断定队友没有牌。');

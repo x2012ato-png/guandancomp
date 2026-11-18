@@ -49,6 +49,8 @@ interface Scored {
   readonly play: Play;
   readonly cost: number;
   readonly details?: readonly string[];
+  readonly overbid?: boolean;
+  readonly protectedLoss?: boolean;
 }
 
 export interface HeuristicTrace {
@@ -190,7 +192,9 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
     if (partnerSingleHasNoUnknownHigher(view)) return { type: 'pass' };
     // 己方牌力强、队友手牌尚多且对手接近走完时，考虑用可控单张接管。
     if (tactics?.mode === 'race' && lp.play.combo.type === 'single' && partnerCount >= 4 && minOpp <= 6) {
-      const cover = candidates.filter(play => play.combo.type === 'single' && play.combo.key === BIG_JOKER)
+      const singles = candidates.filter(play => play.combo.type === 'single');
+      const minSingle = Math.min(...singles.map(play => play.combo.key));
+      const cover = singles.filter(play => play.combo.key === BIG_JOKER && play.combo.key === minSingle)
         .find(play => structuralCost(hand, play, before, view).frag <= 1);
       if (cover) return { type: 'play', play: cover };
     }
@@ -217,20 +221,24 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
       bombs.push({ play, cost: bombTier(play.combo) * 10 + strength(play.combo) * 5 + s.bombLoss * 40 + s.wildsUsed * 6 + flushCost + tacticalCost,
         details: report ? [`炸弹等级 ${bombTier(play.combo)} × 10`, `牌力 ${strength(play.combo).toFixed(3)} × 5`, `额外拆炸 ${s.bombLoss} × 40`, `逢人配 ${s.wildsUsed} × 6`, ...(flushCost ? [`拆掉同花顺 +${flushCost}`] : []), ...tacticalDetails] : undefined });
     } else {
-      const controlBonus = opts.advanced && play.combo.type === 'single' && play.combo.key === BIG_JOKER && hand.length >= 10 ? 5 : 0;
-      nonBomb.push({ play, cost: s.frag * 10 + strength(play.combo) * 6 + s.wildsUsed * 8 + s.bombLoss * 40 + flushCost + pairCost + wildCost - controlBonus + tacticalCost,
-        details: report ? [`余牌结构变化 ${s.frag} × 10`, `牌力 ${strength(play.combo).toFixed(3)} × 6`, `逢人配 ${s.wildsUsed} × 8`, `拆炸 ${s.bombLoss} × 40`, ...(wildCost ? [`余牌较多且对手不紧急，保留逢人配 +${wildCost}`] : []), ...(pairCost ? [`三带二消耗控牌对子 +${pairCost}`] : []), ...(flushCost ? [`拆掉同花顺 +${flushCost}`] : []), ...(controlBonus ? [`大王取得单张控制机会 −${controlBonus}`] : []), ...tacticalDetails] : undefined });
+      nonBomb.push({ play, cost: s.frag * 10 + strength(play.combo) * 6 + s.wildsUsed * 8 + s.bombLoss * 40 + flushCost + pairCost + wildCost + tacticalCost,
+        protectedLoss: s.bombLoss > 0 || losesFlush,
+        details: report ? [`余牌结构变化 ${s.frag} × 10`, `牌力 ${strength(play.combo).toFixed(3)} × 6`, `逢人配 ${s.wildsUsed} × 8`, `拆炸 ${s.bombLoss} × 40`, ...(wildCost ? [`余牌较多且对手不紧急，保留逢人配 +${wildCost}`] : []), ...(pairCost ? [`三带二消耗控牌对子 +${pairCost}`] : []), ...(flushCost ? [`拆掉同花顺 +${flushCost}`] : []), ...tacticalDetails] : undefined });
     }
   }
   nonBomb.sort((a, b) => a.cost - b.cost);
-  const best = nonBomb[0];
+  // 高级策略跟牌先考虑能管住的最小同型牌；代价过高时仍可让牌。
+  // 一手走完已在上方优先处理；越级抢出牌权由后台模拟验证强牌连走机会。
+  const minKey = opts.advanced && nonBomb.length ? Math.min(...nonBomb.map(item => item.play.combo.key)) : null;
+  const eligible = minKey === null ? nonBomb : nonBomb.filter(item => item.play.combo.key === minKey);
+  const best = eligible[0];
   const partnerCaution = !!tactics && tactics.mode === 'support' && !danger && partnerCount > 0 && !view.trick?.passed.includes(partner);
   const limit = danger ? 80 : partnerCaution ? Math.min(opts.followCostLimit, 6) : opts.followCostLimit;
-  report?.({ mode: 'follow', scores: [...nonBomb, ...bombs], limit, danger, nearlyDone: before.turns <= 2, partnerCaution });
+  report?.({ mode: 'follow', scores: [...nonBomb.map(item => ({ ...item, overbid: minKey !== null && item.play.combo.key > minKey })), ...bombs], limit, danger, nearlyDone: before.turns <= 2, partnerCaution });
   const bestBomb = bombs.reduce<Scored | undefined>((selected, item) => !selected || item.cost < selected.cost ? item : selected, undefined);
   const contest = !!tactics && (tactics.firstOpponentStraight || playerCount === 5);
   if (contest && bestBomb && playerCount !== 4 && bestBomb.cost <= (best?.cost ?? limit) + 6) return { type: 'play', play: bestBomb.play };
-  if (best && best.cost <= limit) return { type: 'play', play: best.play };
+  if (best && best.cost <= limit && !(opts.advanced && best.protectedLoss && best.cost > opts.followCostLimit)) return { type: 'play', play: best.play };
 
   if (bombs.length > 0) {
     const nearlyDone = before.turns <= 2;
