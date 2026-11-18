@@ -18,7 +18,7 @@ function cardRowStyle(count: number) {
 }
 function CardCorner({ card, wild = false, compactJoker = false }: { card: CardId; wild?: boolean; compactJoker?: boolean }) {
  const { rank, suit } = cardOf(card);
- return <span className={`card-corner suit-${suit}`} aria-hidden="true"><span className={`card-rank ${suit === 'J' ? 'joker' : rank === 10 ? 'ten' : ''}`}>{suit === 'J' ? (compactJoker ? <>JK<span className="compact-joker-last">R</span></> : 'JOKER') : rankLabel(rank)}</span>{suit !== 'J' && <span className="card-suit">{suitLabel(suit)}</span>}{wild && <span className="card-wild">配</span>}</span>;
+ return <span className={`card-corner suit-${suit}`} aria-hidden="true"><span className={`card-rank ${suit === 'J' ? 'joker' : rank === 10 ? 'ten' : ''}`}>{suit === 'J' ? (compactJoker ? <>J<span className="compact-joker-extra">O</span>K<span className="compact-joker-extra">E</span><span className="compact-joker-last">R</span></> : 'JOKER') : rankLabel(rank)}</span>{suit !== 'J' && <span className="card-suit">{suitLabel(suit)}</span>}{wild && <span className="card-wild">配</span>}</span>;
 }
 function ChatPanel({ roomId, playerId, connected, open, onUnread, onTouchStart, onTouchEnd, onTouchCancel }: { roomId: string; playerId: string; connected: boolean; open: boolean; onUnread: (roomId: string) => void; onTouchStart: (event: React.TouchEvent) => void; onTouchEnd: (event: React.TouchEvent) => void; onTouchCancel: () => void }) {
  const [messages,setMessages]=useState<ChatMessage[]>([]), [draft,setDraft]=useState(''), [error,setError]=useState(''), [sending,setSending]=useState(false);

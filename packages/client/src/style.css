@@ -64,6 +64,7 @@
 .card-rank.ten{font-size:.78em;letter-spacing:-.04em}
 .card-rank.joker{writing-mode:vertical-rl;text-orientation:upright;font-size:.72em;line-height:1;color:#111}
 .red .card-rank.joker{color:#b4483e}
+.compact-joker-extra{display:none}
 
 /* A deck shuffles at the table, then sends cards towards the four seats. */
 .deal-animation{position:absolute;left:50%;top:35%;width:34px;height:48px;transform:translate(-50%,-50%);pointer-events:none;z-index:2}
@@ -260,6 +261,8 @@
   .in-game.six-row-layout .played.card-row,.in-game.six-row-layout .cards.card-row{width:min(100%,calc(var(--card-count) * var(--card-width)))!important}
   .in-game.six-row-layout .mini-card{height:38px;padding:2px}
   .in-game.six-row-layout .mini-card .card-corner{font-size:16px;min-width:0}
+  .in-game.six-row-layout .mini-card .card-rank.joker{font-size:.375em}
+  .in-game.six-row-layout .mini-card .compact-joker-extra,.in-game.six-row-layout .mini-card .compact-joker-last{display:inline}
   .in-game.six-row-layout .card-corner{font-size:18px;min-width:0}
   .in-game.six-row-layout .card-suit,.in-game.six-row-layout .card-wild{margin-top:0}
   .in-game.six-row-layout .card-wild{font-size:7px}

@@ -76,7 +76,7 @@ export function orderedHand(hand: readonly CardId[], level: Level, preferredOrde
 /** Arrangement is independent of whose turn it is and the last play to beat. */
 export function canArrangeHand(selected: readonly CardId[], level: Level, config: RulesConfig): boolean {
   return selected.length >= 3 && interpret(selected, level, config).some(play =>
-    ['triple', 'fullHouse', 'bomb', 'jokerBomb', 'straight', 'straightFlush'].includes(play.combo.type));
+    ['triple', 'fullHouse', 'bomb', 'jokerBomb', 'straight', 'straightFlush', 'tube', 'plate'].includes(play.combo.type));
 }
 
 /** Keep printed ranks and manually arranged groups together while preserving their order. */

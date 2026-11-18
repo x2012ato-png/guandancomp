@@ -61,6 +61,22 @@ describe('手牌规划与布局', () => {
     }
   });
 
+  it('理牌支持三连对和钢板，包括逢人配和 A 的高低用法', () => {
+    for (const text of [
+      'S3 D3 S4 D4 S5 D5', 'S3 D3 S4 D4 S5 H2',
+      'SA DA S2 D2 S3 D3', 'SQ DQ SK DK SA DA',
+      'S3 D3 C3 S4 D4 C4', 'S3 D3 C3 S4 D4 H2',
+      'SA DA CA S2 D2 C2', 'SK DK CK SA DA CA',
+    ]) {
+      // 打 6，避免低 A 组合中的红桃 2 被当作逢人配。
+      const level = text.includes('H2') ? 2 : 6;
+      expect(canArrangeHand(cards(text), level, makeRules()), text).toBe(true);
+    }
+    for (const text of ['S3 D3 S4 D4 S6 D6', 'S3 D3 C3 S5 D5 C5', 'SK DK SA DA S2 D2']) {
+      expect(canArrangeHand(cards(text), 6, makeRules()), text).toBe(false);
+    }
+  });
+
   it('手动牌序在出牌后保留，移除已出牌并保持其他牌的相对顺序', () => {
     const hand = cards('S3 D4 C5 S6 D7 S9 D9 C9 H9');
     const before = orderedHand(hand, 2).flatMap(group => group.cards);
