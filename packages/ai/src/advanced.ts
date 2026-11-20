@@ -8,6 +8,7 @@ import { searchAdvancedWithInfo } from './advancedSearch.ts';
 import { tacticalAdjustments, tacticalContext } from './tactics.ts';
 import { buildCoachInsights, type CoachInsights } from './coachInsights.ts';
 import { fullHousePairCost } from './fullHouseCost.ts';
+import { planHand } from './handPlan.ts';
 import type { AIDecision, AIPolicy, DecisionContext } from './types.ts';
 
 const ENDGAME_HAND_LIMIT = 8;
@@ -75,15 +76,25 @@ function chooseEndgameLead(view: PlayerView, useTactics = true): { play: Play; s
   const minOpp = Math.min(...opponents.map(seat => view.handCounts[seat] || Infinity));
   const partnerCount = view.handCounts[partnerOf(view.seat)];
   const tactics = useTactics ? tacticalContext(view) : undefined;
+  const before = planHand(view.myHand, view.level);
   const scores: EndgameScore[] = [];
   for (const play of candidates) {
-    const turns = estimate(without(view.myHand, play.cards));
+    const remainingCards = without(view.myHand, play.cards);
+    const turns = estimate(remainingCards);
     let score = turns * 10;
     const adjustments: string[] = [];
+    const after = planHand(remainingCards, view.level);
+    const bombLoss = isBomb(play.combo)
+      ? Math.max(0, before.bombs.length - after.bombs.length - 1)
+      : Math.max(0, before.bombs.length - after.bombs.length);
+    if (bombLoss > 0) { score += bombLoss * 12; adjustments.push(`拆炸 ${bombLoss} × 12`); }
     const pairCost = fullHousePairCost(play, view.level);
     if (pairCost) { score += pairCost; adjustments.push(`三带二消耗控牌对子 +${pairCost}`); }
     for (const item of tactics ? tacticalAdjustments(view, play, tactics) : []) { score += item.cost; adjustments.push(`${item.text} ${item.cost > 0 ? '+' : ''}${item.cost}`); }
-    if (isBomb(play.combo)) { score += 4; adjustments.push('使用炸弹 +4'); }
+    const finishesWithBomb = isBomb(play.combo) && remainingCards.length > 0 &&
+      generatePlays(remainingCards, view.level, view.config).some(next => next.cards.length === remainingCards.length && isBomb(next.combo));
+    if (finishesWithBomb) { score -= 2; adjustments.push('余牌可由炸弹一手出完 −2'); }
+    else if (isBomb(play.combo)) { score += 4; adjustments.push('使用炸弹 +4'); }
     if (flushes.length && play.combo.type !== 'straightFlush') {
       const remaining = new Set(without(view.myHand, play.cards));
       if (!flushes.some(flush => flush.cards.every(card => remaining.has(card)))) { score += 12; adjustments.push('拆掉同花顺 +12'); }
@@ -146,7 +157,7 @@ function heuristicExplanation(trace: HeuristicTrace, view: PlayerView, decision:
   const context = `上家剩 ${lastCount} 张${Number.isFinite(minOpp) ? `，仍在牌局中的对手最少剩 ${minOpp} 张` : ''}，${trace.danger ? '触发拦截' : '未触发拦截'}${trace.partnerCaution ? '；自己牌力偏弱且队友仍有机会跟牌，倾向让队友接牌' : ''}，普通跟牌代价上限为 ${trace.limit} 分`;
   const comparison = best ? `最小同型普通跟牌中代价最低的是 ${playName(best.play)}，代价 ${formatScore(best.cost)} 分（${best.details!.join('，')}）${nonBomb[1] ? `；另一种 ${playName(nonBomb[1].play)} 为 ${formatScore(nonBomb[1].cost)} 分（${nonBomb[1].details!.join('，')}）` : ''}${best.protectedLoss && best.cost > 14 ? '；该普通跟法会拆散炸弹或同花顺，超过保护阈值' : ''}` : '没有能压过当前牌的普通牌型';
   const tactics = tacticalContext(view);
-  const bomb = bombs[0] ? `；最便宜炸弹为 ${playName(bombs[0].play)}，代价 ${formatScore(bombs[0].cost)} 分（${bombs[0].details!.join('，')}）${tactics.firstOpponentStraight ? '，对手首次出顺子可考虑拦截' : lastCount === 4 && !trace.nearlyDone && minOpp > 2 ? '，上家剩 4 张且局势未到紧急程度，优先保留炸弹' : trace.danger || trace.nearlyDone ? '，符合用炸条件' : '，但当前未满足用炸条件'}` : '；没有可用炸弹';
+  const bomb = bombs[0] ? `；最便宜炸弹为 ${playName(bombs[0].play)}，代价 ${formatScore(bombs[0].cost)} 分（${bombs[0].details!.join('，')}）${tactics.firstOpponentStraight ? '，对手首次出顺子可考虑拦截' : tactics.suppressOpponentComposite ? '，对手出多张牌型冲牌且我方需护航争牌权，可考虑用炸弹压制' : lastCount === 4 && !trace.nearlyDone && minOpp > 2 ? '，上家剩 4 张且局势未到紧急程度，优先保留炸弹' : trace.danger || trace.nearlyDone ? '，符合用炸条件' : '，但当前未满足用炸条件'}` : '；没有可用炸弹';
   return [
     `${context}。${comparison}${bomb}，因此${decision.type === 'pass' ? '选择不要' : `选择 ${playName(decision.play)}`}。`,
     '普通跟牌优先比较能够管住的最小同型牌，代价过高时可以让牌；炸弹另行比较。对手首次出顺子或剩 5 张时可考虑拦截，剩 4 张时通常更谨慎。',
@@ -205,7 +216,7 @@ export function analyzeAdvancedPlay(view: PlayerView, options: AdvancedOptions =
         ? `模拟倾向 ${decisionName(search.decision)}，仅供参考，仍保留基础建议` : '因此调整了原建议' : bestAverage > search.scores[0]!.average
         ? '其他行动虽有更高平均分，但样本数量、一致性或优势不足，保留原建议' : '原建议的评分不低于其他候选行动';
       reasons.push(`${view.handCounts.reduce((a, b) => a + b, 0) <= 18 ? '残局' : '牌局'}模拟比较了 ${search.candidates} 个候选行动，每个行动使用相同的 ${search.samples} 组未知手牌样本：${search.scores.map(item => `${decisionName(item.decision)} ${formatScore(item.average)} 分${item.adjustment ? `（含本手调整 ${item.adjustment > 0 ? '+' : ''}${formatScore(item.adjustment)}）` : ''}`).join('；')}。分数越高越优，${conclusion}。`);
-      reasons.push('每个候选分数 = 各组推演局面分的平均值 + 该出法的固定调整。局面分：结束时，胜方为 +(1 + 升级数 × 0.15)，负方为 −(1 + 升级数 × 0.15)；未结束时为（对方余牌 − 我方余牌）÷ 108 + 资源差 × 0.015 + 出牌权分 + 头游分。资源中炸弹算 1、逢人配算 0.5；出牌权在我方为 +0.025、对方为 −0.025、无人持有为 0；头游在我方为 +0.2、对方为 −0.2、尚无头游为 0。');
+      reasons.push('每个候选分数 = 各组推演局面分的平均值 + 该出法的固定调整。局面分：结束时，胜方为 +(1 + 升级数 × 0.15)，负方为 −(1 + 升级数 × 0.15)；未结束时为（对方余牌 − 我方余牌）÷ 108 + 资源差 × 0.015 + 出牌权分 + 头游分。资源中炸弹算 1、逢人配算 0.5；出牌权在我方为 +0.025、对方为 −0.025、无人持有为 0；头游在我方为 +1.3、对方为 −1.3（已决出二游时另计 ±0.075）、尚无头游为 0。');
       reasons.push(`本手调整明细：${search.scores.map(item => `${decisionName(item.decision)}：${item.adjustmentDetails.length ? item.adjustmentDetails.map(detail => `${detail.text} ${detail.value >= 0 ? '+' : ''}${formatScore(detail.value)}`).join('，') : '无调整'}，合计 ${item.adjustment >= 0 ? '+' : ''}${formatScore(item.adjustment)}`).join('；')}。战术代价按 −0.005 倍换算为模拟分。`);
       const earlyGame = view.handCounts.reduce((a, b) => a + b, 0) > 18;
       reasons.push(`调整基础建议的条件：${earlyGame ? '至少 4 组样本，且至少 80% 的样本优于基础建议，平均优势至少 0.08 分' : '至少 3 组样本，且至少 75% 的样本优于基础建议，平均优势至少 0.04 分'}。${search.scores.slice(1).map(item => `${decisionName(item.decision)}：${item.winsAgainstFallback}/${search.samples} 组优于基础建议，平均差 ${formatScore(item.average - search.scores[0]!.average)} 分`).join('；')}。`);

@@ -129,7 +129,8 @@ function value(state: GameState, seat: Seat): ValueDetail {
   const owner = state.trick?.lastPlay?.seat ?? state.turn;
   const control = owner == null ? 0 : teamOf(owner) === team ? 0.025 : -0.025;
   const first = state.finishOrder[0];
-  const finish = first == null ? 0 : teamOf(first) === team ? 0.2 : -0.2;
+  const second = state.finishOrder[1];
+  const finish = first == null ? 0 : (teamOf(first) === team ? 1.3 : -1.3) + (second == null ? 0 : teamOf(second) === team ? 0.075 : -0.075);
   return { score: (theirs - ours) / DECK_SIZE + resourcesDiff * 0.015 + control + finish,
     explanation: `余牌（对方 ${theirs} − 我方 ${ours}）÷ ${DECK_SIZE}；资源差 ${resourcesDiff} × 0.015（炸弹每个算 1，逢人配每张算 0.5）；牌权 ${control >= 0 ? '+' : ''}${control}；头游 ${finish >= 0 ? '+' : ''}${finish}` };
 }
@@ -194,21 +195,39 @@ export function searchAdvancedWithInfo(view: PlayerView, fallback: AIDecision, c
   const minKey = ordinary.length ? Math.min(...ordinary.map(play => play.combo.key)) : null;
   const overbids = choices.map(choice => minKey !== null && choice.type === 'play' && !isBomb(choice.play.combo) && choice.play.combo.key > minKey);
   const flushes = generatePlays(view.myHand, view.level, view.config).filter(play => play.combo.type === 'straightFlush');
+  const before = planHand(view.myHand, view.level);
   const tactics = tacticalContext(view);
   const adjustments = choices.map(choice => {
     if (choice.type !== 'play') {
       const partner = partnerOf(view.seat);
-      return useTactics && choice.type === 'pass' && view.trick?.lastPlay && teamOf(view.trick.lastPlay.seat) !== teamOf(view.seat) &&
-        tactics.mode === 'support' && view.handCounts[partner] > 0 && !view.trick.passed.includes(partner) ? [{ text: '让队友接牌', value: 0.02 }] : [];
+      const lp = view.trick?.lastPlay;
+      if (!useTactics || choice.type !== 'pass' || !lp || teamOf(lp.seat) === teamOf(view.seat) ||
+          view.handCounts[partner] <= 0 || view.trick?.passed.includes(partner)) return [];
+      const count = view.handCounts[lp.seat] || view.handCounts[partnerOf(lp.seat)];
+      const lowSingle = lp.play.combo.type === 'single' && lp.play.combo.key <= 10 && count >= 4;
+      if (lowSingle && view.handCounts[partner] <= DEFAULT_HEURISTIC.dangerCount &&
+          view.myHand.length >= view.handCounts[partner] + 6 && tactics.mode !== 'race') {
+        return [{ text: '对手出小单且队友剩牌少，让队友接牌', value: 0.06 }];
+      }
+      if (tactics.mode === 'support' && !(lp.play.combo.size >= 5 && view.handCounts[partner] <= DEFAULT_HEURISTIC.dangerCount)) {
+        return [{ text: '让队友接牌', value: 0.02 }];
+      }
+      return [];
     }
-    const remaining = new Set(view.myHand.filter(card => !choice.play.cards.includes(card)));
+    const remainingCards = view.myHand.filter(card => !choice.play.cards.includes(card));
+    const remaining = new Set(remainingCards);
+    const after = planHand(remainingCards, view.level);
+    const bombLoss = isBomb(choice.play.combo)
+      ? Math.max(0, before.bombs.length - after.bombs.length - 1)
+      : Math.max(0, before.bombs.length - after.bombs.length);
     const breaksFlush = choice.play.combo.type !== 'straightFlush' && flushes.length > 0 && !flushes.some(flush => flush.cards.every(card => remaining.has(card)));
     const details: Adjustment[] = [];
     const pairCost = fullHousePairCost(choice.play, view.level);
     if (pairCost) details.push({ text: '三带二消耗控牌对子', value: -pairCost * 0.005 });
     const wildCost = earlyWildCost(view, choice.play);
     if (wildCost) details.push({ text: '余牌较多且对手不紧急，保留逢人配', value: -wildCost * 0.005 });
-    if (breaksFlush) details.push({ text: '拆掉同花顺', value: -0.12 });
+    if (bombLoss > 0) details.push({ text: '拆掉炸弹', value: -0.15 * bombLoss });
+    else if (breaksFlush) details.push({ text: '拆掉同花顺', value: -0.12 });
     if (useTactics) for (const item of tacticalAdjustments(view, choice.play, tactics)) details.push({ text: item.text, value: -item.cost * 0.005 });
     return details;
   });

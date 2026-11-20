@@ -115,7 +115,7 @@ export interface GameUpdate {
   readonly deadline: number | null;
   /** 发送更新时的服务端时间，用于显示与服务端同步的倒计时。 */
   readonly serverNow: number;
-  /** 两名真人出完后，结算时最后一手 AI 牌的显示截止时间。 */
+  /** 结算时最后一手 AI 牌的显示截止时间。 */
   readonly lastBotPlayUntil?: number | null;
   /** 结算后短暂公开末游手牌，双下时同时公开三游手牌。 */
   readonly lastPlaceReveal: { readonly hands: readonly { readonly seat: Seat; readonly cards: readonly CardId[]; readonly place: number }[]; readonly until: number } | null;

@@ -201,7 +201,7 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
     return { type: 'pass' };
   }
 
-  const playerCount = view.handCounts[lp.seat]!;
+  const playerCount = view.handCounts[lp.seat]! || view.handCounts[partnerOf(lp.seat)]!;
   const danger = playerCount <= opts.dangerCount || minOpp <= Math.ceil(opts.dangerCount / 2);
 
   const nonBomb: Scored[] = [];
@@ -232,18 +232,26 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
   const minKey = opts.advanced && nonBomb.length ? Math.min(...nonBomb.map(item => item.play.combo.key)) : null;
   const eligible = minKey === null ? nonBomb : nonBomb.filter(item => item.play.combo.key === minKey);
   const best = eligible[0];
-  const partnerCaution = !!tactics && tactics.mode === 'support' && !danger && partnerCount > 0 && !view.trick?.passed.includes(partner);
-  const limit = danger ? 80 : partnerCaution ? Math.min(opts.followCostLimit, 6) : opts.followCostLimit;
+  const partnerCanAct = partnerCount > 0 && !view.trick?.passed.includes(partner);
+  const lowSingleForPartner = lp.play.combo.type === 'single' && lp.play.combo.key <= 10 &&
+    partnerCanAct && playerCount >= 4 && minOpp >= 3;
+  const yieldLowSingleToPartner = !!tactics && lowSingleForPartner &&
+    partnerCount <= opts.dangerCount && view.myHand.length >= partnerCount + 6 && tactics.mode !== 'race';
+  const partnerCaution = !!tactics && partnerCanAct &&
+    ((tactics.mode === 'support' && (!danger || lowSingleForPartner) && !(lp.play.combo.size >= 5 && partnerCount <= opts.dangerCount)) || yieldLowSingleToPartner);
+  const limit = partnerCaution ? Math.min(opts.followCostLimit, 6) : danger ? 80 : opts.followCostLimit;
   report?.({ mode: 'follow', scores: [...nonBomb.map(item => ({ ...item, overbid: minKey !== null && item.play.combo.key > minKey })), ...bombs], limit, danger, nearlyDone: before.turns <= 2, partnerCaution });
+  if (yieldLowSingleToPartner && before.turns > 2) return { type: 'pass' };
+  const normalCanBeat = !!best && best.cost <= limit && !(opts.advanced && best.protectedLoss && best.cost > opts.followCostLimit);
   const bestBomb = bombs.reduce<Scored | undefined>((selected, item) => !selected || item.cost < selected.cost ? item : selected, undefined);
-  const contest = !!tactics && (tactics.firstOpponentStraight || playerCount === 5);
+  const contest = !!tactics && (tactics.firstOpponentStraight || (tactics.suppressOpponentComposite && !normalCanBeat) || (playerCount === 5 && !normalCanBeat && !lowSingleForPartner));
   if (contest && bestBomb && playerCount !== 4 && bestBomb.cost <= (best?.cost ?? limit) + 6) return { type: 'play', play: bestBomb.play };
-  if (best && best.cost <= limit && !(opts.advanced && best.protectedLoss && best.cost > opts.followCostLimit)) return { type: 'play', play: best.play };
+  if (normalCanBeat) return { type: 'play', play: best.play };
 
   if (bombs.length > 0) {
     const nearlyDone = before.turns <= 2;
     const conserveFour = !!tactics && playerCount === 4 && !nearlyDone && minOpp > 2;
-    const wantBomb = (danger || nearlyDone) && !conserveFour;
+    const wantBomb = ((danger && !lowSingleForPartner) || nearlyDone || (!!tactics?.suppressOpponentComposite && !normalCanBeat)) && !conserveFour;
     if (wantBomb) {
       bombs.sort((a, b) => a.cost - b.cost);
       return { type: 'play', play: bombs[0]!.play };

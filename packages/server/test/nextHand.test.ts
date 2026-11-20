@@ -54,8 +54,8 @@ describe('next hand readiness', () => {
     expect(nextHandDeadline(null, 20000, 15000)).toBe(35000);
   });
 
-  it('reveals only the last-place hand during the three-second settlement window', () => {
-    expect(LAST_PLACE_REVEAL_MS).toBe(3_000);
+  it('reveals only the last-place hand during the eight-second settlement window after any bot play display', () => {
+    expect(LAST_PLACE_REVEAL_MS).toBe(8_000);
     const base = createGame(DEFAULT_RULES, 'reveal');
     const state = {
       ...base,
@@ -63,13 +63,16 @@ describe('next hand readiness', () => {
       hands: [[1], [2, 3], [4], [5, 6, 7]] as const,
       lastResult: computeHandResult({ ...base, finishOrder: [0, 1, 2, 3] as Seat[] }, base.config),
     };
-    const until = 10_000 + LAST_PLACE_REVEAL_MS;
-    expect(lastPlaceReveal(state, until, 10_000)).toEqual({ hands: [{ seat: 3, cards: [5, 6, 7], place: 4 }], until });
-    expect(lastPlaceReveal(state, until, until - 1)?.hands[0]?.cards).toEqual([5, 6, 7]);
-    expect(lastPlaceReveal(state, until, until)).toBeNull();
-    expect(lastPlaceReveal({ ...state, phase: 'matchOver' }, until, 10_000)?.hands[0]?.seat).toBe(3);
-    expect(lastPlaceReveal({ ...state, phase: 'playing' }, until, 10_000)).toBeNull();
-    expect(lastPlaceReveal(state, null, 10_000)).toBeNull();
+    const botPlayUntil = 15_000;
+    const until = botPlayUntil + LAST_PLACE_REVEAL_MS;
+    expect(lastPlaceReveal(state, until, 10_000, botPlayUntil)).toBeNull();
+    expect(lastPlaceReveal(state, until, botPlayUntil - 1, botPlayUntil)).toBeNull();
+    expect(lastPlaceReveal(state, until, botPlayUntil, botPlayUntil)).toEqual({ hands: [{ seat: 3, cards: [5, 6, 7], place: 4 }], until });
+    expect(lastPlaceReveal(state, until, until - 1, botPlayUntil)?.hands[0]?.cards).toEqual([5, 6, 7]);
+    expect(lastPlaceReveal(state, until, until, botPlayUntil)).toBeNull();
+    expect(lastPlaceReveal({ ...state, phase: 'matchOver' }, until, botPlayUntil, botPlayUntil)?.hands[0]?.seat).toBe(3);
+    expect(lastPlaceReveal({ ...state, phase: 'playing' }, until, botPlayUntil, botPlayUntil)).toBeNull();
+    expect(lastPlaceReveal(state, null, botPlayUntil, botPlayUntil)).toBeNull();
   });
 
   it.each([

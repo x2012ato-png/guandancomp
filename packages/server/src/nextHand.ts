@@ -1,9 +1,9 @@
 import { isDoubleDown, type GameState, type Seat } from '@guandan/engine';
 
-export const LAST_PLACE_REVEAL_MS = 3_000;
+export const LAST_PLACE_REVEAL_MS = 8_000;
 
-export function lastPlaceReveal(state: GameState, until: number | null, now: number) {
-  if ((state.phase !== 'handOver' && state.phase !== 'matchOver') || until === null || now >= until) return null;
+export function lastPlaceReveal(state: GameState, until: number | null, now: number, after: number | null = null) {
+  if ((state.phase !== 'handOver' && state.phase !== 'matchOver') || until === null || (after !== null && now < after) || now >= until) return null;
   const order = state.lastResult?.finishOrder;
   if (!order || order.length !== 4) return null;
   const places = isDoubleDown(order) ? [2, 3] : [3];

@@ -84,4 +84,55 @@ describe('队友牌权与残局控牌顺序', () => {
     const decision = analyzeAdvancedPlay(toPlayerView(state, 0), { allPhases: true })!.decision;
     expect(decision.type === 'play' && decision.play.cards).toEqual(cards('SJ SJ'));
   });
+
+  it('上家已出完且自己剩两副炸弹加一张大王时，出完大王后整出炸弹而不拆出单张', () => {
+    const myNine = cards('S5 H5 C5 D5 BJ S2 H2 C2 D2');
+    const partnerFour = cards('S7 D7 SK DK');
+    const downSeventeen = cards('S3 D3 C3 H3 S4 D4 C4 S6 D6 C6 S8 D8 C8 S9 D9 S10 D10');
+    let state = withPublicCards(playingState([partnerFour, [], myNine, downSeventeen], {
+      level: 3,
+      turn: 2,
+      finishOrder: [1],
+    }));
+    const first = analyzeAdvancedPlay(toPlayerView(state, 2), { search: true, allPhases: true })!.decision;
+    expect(first.type === 'play' && first.play.combo).toEqual({ type: 'single', key: 17, size: 1 });
+    for (const action of [
+      decisionToAction(2, first),
+      { type: 'pass' as const, seat: 3 as const },
+      { type: 'pass' as const, seat: 0 as const },
+    ]) {
+      const next = reduce(state, action);
+      if (!next.ok) throw new Error(next.error.message);
+      state = next.state;
+    }
+    const second = analyzeAdvancedPlay(toPlayerView(state, 2), { search: true, allPhases: true })!.decision;
+    expect(second.type).toBe('play');
+    if (second.type === 'play') expect(isBomb(second.play.combo)).toBe(true);
+  });
+
+  it('打九中期队友剩五张、自己剩二十一张时，用炸弹压制对手多张牌型，对手出单张八时让队友接牌而不开炸', () => {
+    const level = 9;
+    const coachHand = cards('S2 H2 C2 D2 S3 D4 C5 S6 H7 D8 S10 HJ CQ DK SA S4 D6 C7 H10 SQ CK');
+    const partnerHand = cards('S9 D9 SJ SK DA');
+    const upOpponent = cards('SK HK CK S4 D4 S5 D5 C6 H6 S7 D7');
+    const downOpponent = cards('S3 H3 C3 S8 H8 C8 D10 C10 SJ DJ CQ DQ CA HA');
+    const fullHouse = interpret(cards('SK HK CK S4 D4'), level, makeRules()).find(p => p.combo.type === 'fullHouse')!;
+    const singleEight = interpret(cards('S8'), level, makeRules())[0]!;
+    const vsComposite = withPublicCards(playingState([partnerHand, upOpponent, coachHand, downOpponent], {
+      level,
+      turn: 2,
+      trick: { leader: 1, lastPlay: { seat: 1, play: fullHouse }, passed: [], history: [{ seat: 1, play: fullHouse }] },
+    }));
+    const compositeDecision = analyzeAdvancedPlay(toPlayerView(vsComposite, 2), { search: true, allPhases: true })!.decision;
+    expect(compositeDecision.type).toBe('play');
+    if (compositeDecision.type === 'play') expect(isBomb(compositeDecision.play.combo)).toBe(true);
+
+    const vsSingleEight = withPublicCards(playingState([partnerHand, upOpponent.slice(0, 5), coachHand, downOpponent], {
+      level,
+      turn: 2,
+      trick: { leader: 1, lastPlay: { seat: 1, play: singleEight }, passed: [], history: [{ seat: 1, play: singleEight }] },
+    }));
+    const singleDecision = analyzeAdvancedPlay(toPlayerView(vsSingleEight, 2), { search: true, allPhases: true })!.decision;
+    expect(singleDecision).toEqual({ type: 'pass' });
+  });
 });
