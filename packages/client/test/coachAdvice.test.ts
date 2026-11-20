@@ -11,6 +11,8 @@ describe('指导出牌区', () => {
   it('shows the suggested cards, wild assignment and reasons', () => {
     const play = interpret(cards('S3 D4 C5 S6 H2'), 2, makeRules()).find(p => p.combo.type === 'straight')!;
     const html = renderToStaticMarkup(createElement(CoachAdvice, { advice: { decision: {type:'play', play}, reasons: ['保留余牌', '注意对手'] }, dealing:false, myTurn:true }));
+    expect(html).toContain('<details class="coach-advice"');
+    expect(html).not.toContain('<details class="coach-advice" open');
     expect(html).toContain('指导出牌区');
     expect(html).toContain('♠3');
     expect(html).toContain('逢人配');
