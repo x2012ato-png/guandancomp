@@ -122,8 +122,9 @@ describe('room service', () => {
       let body = '';
       req.on('data', chunk => { body += String(chunk); });
       req.on('end', () => {
-        requestBody = JSON.parse(body);
-        if (requestBody.model === 'broken-model') { res.writeHead(500); res.end(); return; }
+        const parsedBody = JSON.parse(body);
+        if (parsedBody.model === 'broken-model') { res.writeHead(500); res.end(); return; }
+        requestBody = parsedBody;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ choices: [{ message: { content: '{"choice":0}' } }] }));
       });
@@ -151,6 +152,17 @@ describe('room service', () => {
       expect(JSON.stringify(guestState)).not.toContain(externalAI.apiKey);
       expect((await guest.socket.emitWithAck('room:configureBot', { seat: 2, externalAI })).ok).toBe(false);
       expect((await host.socket.emitWithAck('room:addBot', { seat: 3, botKind: 'beginner' })).ok).toBe(true);
+      expect((await host.socket.emitWithAck('room:configureBot', { seat: 3, externalAI: { ...externalAI, model: 'broken-model' } })).ok).toBe(true);
+      const failedNotice = new Promise<Parameters<ServerToClientEvents['notice']>[0]>(resolve => host.socket.once('notice', resolve));
+      const fallback = new Promise<GameUpdate>((resolve, reject) => {
+        const timer = setTimeout(() => { host.socket.off('game:update', onUpdate); reject(new Error('Fallback AI did not act')); }, DEAL_DURATION_MS + 8000);
+        const onUpdate = (update: GameUpdate) => {
+          if (update.events.some(event => (event.type === 'played' || event.type === 'passed') && event.seat === 3)) {
+            clearTimeout(timer); host.socket.off('game:update', onUpdate); resolve(update);
+          }
+        };
+        host.socket.on('game:update', onUpdate);
+      });
       const played = new Promise<GameUpdate>((resolve, reject) => {
         const timer = setTimeout(() => { host.socket.off('game:update', onUpdate); reject(new Error('External AI did not play')); }, DEAL_DURATION_MS + 8000);
         const onUpdate = (update: GameUpdate) => {
@@ -161,6 +173,8 @@ describe('room service', () => {
         host.socket.on('game:update', onUpdate);
       });
       expect((await host.socket.emitWithAck('room:start')).ok).toBe(true);
+      const rejected = await host.socket.emitWithAck('room:configureBot', { seat: 2, externalAI: { ...externalAI, model: 'updated-model', apiKey: '' } });
+      expect(rejected).toMatchObject({ ok: false, error: { code: 'ALREADY_STARTED' } });
       await played;
       expect(authorization).toBe('Bearer test-secret');
       expect(requestBody.model).toBe('mock-model');
@@ -168,20 +182,8 @@ describe('room service', () => {
       expect(context.view.seat).toBe(2);
       expect(context.view.myHand).toHaveLength(27);
       expect(context.view).not.toHaveProperty('hands');
-      const failedNotice = new Promise<Parameters<ServerToClientEvents['notice']>[0]>(resolve => host.socket.once('notice', resolve));
-      const fallback = new Promise<GameUpdate>((resolve, reject) => {
-        const timer = setTimeout(() => { host.socket.off('game:update', onUpdate); reject(new Error('Fallback AI did not act')); }, 8000);
-        const onUpdate = (update: GameUpdate) => {
-          if (update.events.some(event => (event.type === 'played' || event.type === 'passed') && event.seat === 3)) {
-            clearTimeout(timer); host.socket.off('game:update', onUpdate); resolve(update);
-          }
-        };
-        host.socket.on('game:update', onUpdate);
-      });
-      expect((await host.socket.emitWithAck('room:configureBot', { seat: 3, externalAI: { ...externalAI, model: 'broken-model' } })).ok).toBe(true);
       expect((await failedNotice).message).toContain('暂用内置 AI');
       await fallback;
-      expect((await host.socket.emitWithAck('room:configureBot', { seat: 2, externalAI: { ...externalAI, model: 'updated-model', apiKey: '' } })).ok).toBe(true);
     } finally {
       await new Promise<void>(resolve => provider.close(() => resolve()));
     }
