@@ -1,0 +1,20 @@
+{
+  "name": "@guandan/discord",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts",
+    "register": "node src/registerCommands.ts"
+  },
+  "dependencies": {
+    "@guandan/ai": "*",
+    "@guandan/engine": "*",
+    "@guandan/protocol": "*",
+    "discord.js": "^14.18.0"
+  }
+}

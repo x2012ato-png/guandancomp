@@ -9,8 +9,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev:server": "npm -w @guandan/server run dev",
     "dev:client": "npm -w @guandan/client run dev",
+    "dev:discord": "npm -w @guandan/discord run dev",
     "build": "npm -w @guandan/client run build",
-    "start": "npm -w @guandan/server run start"
+    "start": "npm -w @guandan/server run start",
+    "start:discord": "npm -w @guandan/discord run start"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
