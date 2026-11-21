@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { interpret, isBomb, makeRandom, makeRules, reduce, toPlayerView, type GameState } from '@guandan/engine';
 import { analyzeAdvancedPlay } from '../src/advanced.ts';
 import { searchAdvancedWithInfo } from '../src/advancedSearch.ts';
+import { partnerMayFinishPair } from '../src/tactics.ts';
 import { decisionToAction } from '../src/types.ts';
 import { cards, playingState } from '../../engine/test/helpers.ts';
 
@@ -135,4 +136,56 @@ describe('队友牌权与残局控牌顺序', () => {
     const singleDecision = analyzeAdvancedPlay(toPlayerView(vsSingleEight, 2), { search: true, allPhases: true })!.decision;
     expect(singleDecision).toEqual({ type: 'pass' });
   });
+  it.each([false, true])('对手已头游、队友剩两张时，让其尝试接小对子（模拟=%s）', search => {
+    const pair = interpret(cards('S5 D5'), 4, makeRules())[0]!;
+    const state = withPublicCards(playingState([
+      cards('S7 D7 C7 H7 S3 C8 C9 SK DA'), [], cards('S8 D8'),
+      cards('S2 D2 C2 H2 S6 D6 C6 H6 S10 D10 C10 H10'),
+    ], { level: 4, turn: 0, finishOrder: [1],
+      trick: { leader: 3, lastPlay: { seat: 3, play: pair }, passed: [], history: [{ seat: 3, play: pair }] } }));
+    const view = toPlayerView(state, 0);
+    const result = analyzeAdvancedPlay(view, { search, allPhases: true })!;
+    expect(result.decision).toEqual({ type: 'pass' });
+    expect(result.reasons.join(' ')).toContain('可能用对子');
+    const passed = reduce(state, decisionToAction(0, result.decision));
+    if (!passed.ok) throw new Error(passed.error.message);
+    const finish = reduce(passed.state, { type: 'play', seat: 2, cards: cards('S8 D8') });
+    expect(finish.ok && finish.state.finishOrder.slice(0, 2)).toEqual([1, 2]);
+  });
+
+  it('队友已不要或对手接近走完时，不因队友剩两张而一律让牌', () => {
+    const pair = interpret(cards('S5 D5'), 4, makeRules())[0]!;
+    const base = playingState([
+      cards('S7 D7 C7 H7 S3 C8 C9 SK DA'), [], cards('S8 D8'),
+      cards('S2 D2 C2 H2 S6 D6 C6 H6 S10 D10 C10 H10'),
+    ], { level: 4, turn: 0, finishOrder: [1],
+      trick: { leader: 3, lastPlay: { seat: 3, play: pair }, passed: [2], history: [{ seat: 3, play: pair }] } });
+    expect(partnerMayFinishPair(toPlayerView(base, 0))).toBe(false);
+    const urgent = { ...base, hands: [base.hands[0], base.hands[1], base.hands[2], cards('S2 D2')] as const,
+      trick: { ...base.trick!, passed: [] } };
+    const defend = analyzeAdvancedPlay(toPlayerView(urgent, 0), { search: false })!;
+    expect(defend.decision.type === 'play' && isBomb(defend.decision.play.combo)).toBe(true);
+  });
+
+  it('炸弹能直接走完时，不错过自己的二游', () => {
+    const pair = interpret(cards('S5 D5'), 4, makeRules())[0]!;
+    const state = playingState([cards('S7 D7 C7 H7'), [], cards('S8 D8'), cards('S2 D2 C2 H2 S6 D6')], {
+      level: 4, turn: 0, finishOrder: [1],
+      trick: { leader: 3, lastPlay: { seat: 3, play: pair }, passed: [], history: [{ seat: 3, play: pair }] },
+    });
+    const decision = analyzeAdvancedPlay(toPlayerView(state, 0), { search: false })!.decision;
+    expect(decision.type === 'play' && decision.play.cards.length).toBe(4);
+  });
+
+  it('对手头游的最后一手无法普通接住时，可用炸弹阻止其队友接风', () => {
+    const triple = interpret(cards('S5 D5 C5'), 4, makeRules())[0]!;
+    const state = playingState([cards('S8 D8'), [], cards('S7 D7 C7 H7 S3 C8 C9 SK DA'),
+      cards('S2 D2 C2 H2 S6 D6 C6 H6 S10 D10 C10 H10')], {
+      level: 4, turn: 2, finishOrder: [1],
+      trick: { leader: 1, lastPlay: { seat: 1, play: triple }, passed: [], history: [{ seat: 1, play: triple }] },
+    });
+    const decision = analyzeAdvancedPlay(toPlayerView(state, 2), { search: false })!.decision;
+    expect(decision.type === 'play' && isBomb(decision.play.combo)).toBe(true);
+  });
+
 });

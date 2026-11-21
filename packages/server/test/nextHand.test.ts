@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeHandResult, createGame, DEFAULT_RULES, type Seat } from '@guandan/engine';
-import { allHumansReady, LAST_PLACE_REVEAL_MS, lastPlaceReveal, nextHandDeadline, toggleReady } from '../src/nextHand.ts';
+import { allHumansReady, lastPlaceReveal, nextHandDeadline, toggleReady } from '../src/nextHand.ts';
 
 describe('next hand readiness', () => {
   it('toggles readiness before the next hand begins', () => {
@@ -54,8 +54,7 @@ describe('next hand readiness', () => {
     expect(nextHandDeadline(null, 20000, 15000)).toBe(35000);
   });
 
-  it('reveals only the last-place hand during the eight-second settlement window after any bot play display', () => {
-    expect(LAST_PLACE_REVEAL_MS).toBe(8_000);
+  it('reveals only the last-place hand during the readiness countdown after any bot play display', () => {
     const base = createGame(DEFAULT_RULES, 'reveal');
     const state = {
       ...base,
@@ -64,13 +63,13 @@ describe('next hand readiness', () => {
       lastResult: computeHandResult({ ...base, finishOrder: [0, 1, 2, 3] as Seat[] }, base.config),
     };
     const botPlayUntil = 15_000;
-    const until = botPlayUntil + LAST_PLACE_REVEAL_MS;
+    const until = botPlayUntil + 15_000;
     expect(lastPlaceReveal(state, until, 10_000, botPlayUntil)).toBeNull();
     expect(lastPlaceReveal(state, until, botPlayUntil - 1, botPlayUntil)).toBeNull();
     expect(lastPlaceReveal(state, until, botPlayUntil, botPlayUntil)).toEqual({ hands: [{ seat: 3, cards: [5, 6, 7], place: 4 }], until });
     expect(lastPlaceReveal(state, until, until - 1, botPlayUntil)?.hands[0]?.cards).toEqual([5, 6, 7]);
     expect(lastPlaceReveal(state, until, until, botPlayUntil)).toBeNull();
-    expect(lastPlaceReveal({ ...state, phase: 'matchOver' }, until, botPlayUntil, botPlayUntil)?.hands[0]?.seat).toBe(3);
+    expect(lastPlaceReveal({ ...state, phase: 'matchOver' }, null, botPlayUntil, botPlayUntil)).toEqual({ hands: [{ seat: 3, cards: [5, 6, 7], place: 4 }], until: null });
     expect(lastPlaceReveal({ ...state, phase: 'playing' }, until, botPlayUntil, botPlayUntil)).toBeNull();
     expect(lastPlaceReveal(state, null, botPlayUntil, botPlayUntil)).toBeNull();
   });

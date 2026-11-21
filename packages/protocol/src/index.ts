@@ -53,12 +53,25 @@ export interface SessionInfo {
 }
 
 export type SeatKind = 'empty' | 'human' | 'bot';
-export type BotKind = 'beginner' | 'coach';
+export type BotKind = 'beginner' | 'coach' | 'external';
+
+export type ExternalAIAPI = 'openai' | 'lmstudio';
+
+/** 外部接口的地址和模型；密钥仅用于提交配置。 */
+export interface ExternalAISettings {
+  readonly apiType?: ExternalAIAPI;
+  readonly baseUrl: string;
+  readonly model: string;
+  /** null 清除现有密钥；空字符串保留同一地址已有密钥。 */
+  readonly apiKey?: string | null;
+}
 
 export interface SeatInfo {
   readonly seat: Seat;
   readonly kind: SeatKind;
   readonly botKind: BotKind | null;
+  /** 外部 AI 的非密钥配置；密钥不会出现在房间快照中。 */
+  readonly externalAI?: { readonly apiType?: ExternalAIAPI; readonly baseUrl: string; readonly model: string } | null;
   readonly nickname: string | null;
   readonly playerId: string | null;
   readonly connected: boolean;
@@ -117,8 +130,8 @@ export interface GameUpdate {
   readonly serverNow: number;
   /** 结算时最后一手 AI 牌的显示截止时间。 */
   readonly lastBotPlayUntil?: number | null;
-  /** 结算后短暂公开末游手牌，双下时同时公开三游手牌。 */
-  readonly lastPlaceReveal: { readonly hands: readonly { readonly seat: Seat; readonly cards: readonly CardId[]; readonly place: number }[]; readonly until: number } | null;
+  /** 准备倒计时期间公开末游手牌，双下时同时公开三游手牌；比赛结束后持续公开。 */
+  readonly lastPlaceReveal: { readonly hands: readonly { readonly seat: Seat; readonly cards: readonly CardId[]; readonly place: number }[]; readonly until: number | null } | null;
   /** 开局动画的服务端时间，重连时用于恢复进度。 */
   readonly dealing: { readonly startedAt: number; readonly serverNow: number } | null;
 }
@@ -146,7 +159,8 @@ export interface ClientToServerEvents {
   'room:leave': (ack: AckFn) => void;
   'room:sit': (p: { seat: Seat }, ack: AckFn) => void;
   'room:stand': (ack: AckFn) => void;
-  'room:addBot': (p: { seat: Seat; botKind?: BotKind }, ack: AckFn) => void;
+  'room:addBot': (p: { seat: Seat; botKind?: BotKind; externalAI?: ExternalAISettings }, ack: AckFn) => void;
+  'room:configureBot': (p: { seat: Seat; externalAI: ExternalAISettings }, ack: AckFn) => void;
   'room:removeBot': (p: { seat: Seat }, ack: AckFn) => void;
   'room:start': (ack: AckFn) => void;
   'game:action': (p: ClientGameAction, ack: AckFn) => void;

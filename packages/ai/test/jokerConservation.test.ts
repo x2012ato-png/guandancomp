@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { interpret, makeRules, toPlayerView } from '@guandan/engine';
+import { interpret, isBomb, makeRules, toPlayerView } from '@guandan/engine';
 import { analyzeAdvancedPlay } from '../src/advanced.ts';
 import { hasStrongFinishEvidence, searchAdvancedWithInfo, selectStableCandidate } from '../src/advancedSearch.ts';
 import { choosePlay, DEFAULT_HEURISTIC } from '../src/heuristic.ts';
@@ -7,7 +7,8 @@ import { cards, playingState } from '../../engine/test/helpers.ts';
 
 function followView(handSpec: string, opponentCount = 10, lastCard = 'H2') {
   const hand = cards(handSpec);
-  const previous = interpret(cards(lastCard), 2, makeRules())[0]!;
+  const last = cards(lastCard).map(card => hand.includes(card) ? card + 54 : card);
+  const previous = interpret(last, 2, makeRules())[0]!;
   const reserved = new Set([...hand, ...previous.cards]);
   const available = Array.from({ length: 108 }, (_, id) => id).filter(id => !reserved.has(id));
   const hands: [number[], number[], number[], number[]] = [hand, available.slice(0, 10), available.slice(10, 20), available.slice(20, 20 + opponentCount)];
@@ -88,4 +89,59 @@ describe('跟单时保留大王', () => {
     expect(selectStableCandidate([0, 2], [0, 10], 10, true, [false, true], [0, 8])).toBe(0);
     expect(selectStableCandidate([0, 2], [0, 10], 10, true, [false, true], [0, 9])).toBe(1);
   });
+  it.each([2, 10])('初级和教练持大王与炸弹跟小王时优先大王（对手剩 %s 张）', opponentCount => {
+    const view = followView('BJ BJ S7 D7 C7 H7', opponentCount, 'SJ');
+    for (const decision of [choosePlay(view), analyzeAdvancedPlay(view, { search: false })!.decision]) {
+      expect(decision.type === 'play' && decision.play.combo.type === 'single' && decision.play.combo.key === 17).toBe(true);
+    }
+  });
+
+  it('有更小的合法单张时，仍可保留大王和炸弹', () => {
+    const view = followView('SJ BJ S7 D7 C7 H7 S3 D5 C6', 2, 'H2');
+    for (const decision of [choosePlay(view), analyzeAdvancedPlay(view, { search: false })!.decision]) {
+      expect(decision.type === 'play' && decision.play.combo.key).toBe(16);
+    }
+  });
+
+  it('大王压不住对方大王时，仍可以用炸弹', () => {
+    const view = followView('BJ S7 D7 C7 H7 S3 D5 C6', 2, 'BJ');
+    for (const decision of [choosePlay(view), analyzeAdvancedPlay(view, { search: false })!.decision]) {
+      expect(decision.type === 'play' && isBomb(decision.play.combo)).toBe(true);
+    }
+  });
+
+  it('后台模拟不会用炸弹代替能压对手单张的大王', () => {
+    const view = followView('BJ BJ S7 D7 C7 H7 S3 D5 C6', 2, 'SJ');
+    const fallback = choosePlay(view, { ...DEFAULT_HEURISTIC, advanced: true });
+    const result = searchAdvancedWithInfo(view, fallback, { deadline: Date.now() + 5000 }, true);
+    expect(result.samples).toBeGreaterThan(0);
+    expect(result.scores.some(item => item.decision.type === 'play' && item.decision.play.combo.key === 17)).toBe(true);
+    expect(result.scores.some(item => item.decision.type === 'play' && isBomb(item.decision.play.combo))).toBe(false);
+    expect(result.decision.type === 'play' && isBomb(result.decision.play.combo)).toBe(false);
+  }, 10000);
+
+  it('不为了使用大王而压队友的单张', () => {
+    const view = followView('BJ S7 D7 C7 H7 S3 D5 C6', 10, 'SJ');
+    const partnerLead = { ...view, trick: { ...view.trick!, lastPlay: { ...view.trick!.lastPlay!, seat: 2 as const } } };
+    expect(choosePlay(partnerLead)).toEqual({ type: 'pass' });
+    expect(analyzeAdvancedPlay(partnerLead, { search: false })!.decision).toEqual({ type: 'pass' });
+  });
+
+  it('对方出对子时不套用单张规则，仍可使用炸弹', () => {
+    const pair = interpret(cards('S5 D5'), 2, makeRules())[0]!;
+    const state = playingState([cards('BJ S7 D7 C7 H7 S3 D6'), cards('S8 D8'), cards('S9 D9'), cards('S4 D4')], {
+      trick: { leader: 3, lastPlay: { seat: 3, play: pair }, passed: [], history: [{ seat: 3, play: pair }] },
+    });
+    const view = toPlayerView(state, 0);
+    const decision = analyzeAdvancedPlay(view, { search: false })!.decision;
+    expect(decision.type === 'play' && isBomb(decision.play.combo)).toBe(true);
+  });
+
+  it('王炸能一手出完时，跟对手单张仍按要求先出大王', () => {
+    const view = followView('BJ BJ SJ SJ', 2, 'H2');
+    for (const decision of [choosePlay(view), analyzeAdvancedPlay(view, { search: false })!.decision]) {
+      expect(decision.type === 'play' && decision.play.combo.type === 'single' && decision.play.combo.key === 17).toBe(true);
+    }
+  });
+
 });

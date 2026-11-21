@@ -1,11 +1,11 @@
 /** 高级策略：沿用初级策略，只在有把握评估的局面增加残局判断。 */
 import {
-  cardLabel, cardPower, comboLabel, DECK_SIZE, generatePlays, isBomb, nextSeat, partnerOf, rankLabel, suitLabel, teamOf,
+  BIG_JOKER, cardLabel, cardPower, comboLabel, DECK_SIZE, generatePlays, isBomb, nextSeat, partnerOf, rankLabel, suitLabel, teamOf,
   type CardId, type Play, type PlayerView,
 } from '@guandan/engine';
 import { choosePlay, createBeginnerPolicy, DEFAULT_HEURISTIC, generateTacticalPlays, type HeuristicTrace } from './heuristic.ts';
 import { searchAdvancedWithInfo } from './advancedSearch.ts';
-import { tacticalAdjustments, tacticalContext } from './tactics.ts';
+import { partnerMayFinishPair, tacticalAdjustments, tacticalContext } from './tactics.ts';
 import { buildCoachInsights, type CoachInsights } from './coachInsights.ts';
 import { fullHousePairCost } from './fullHouseCost.ts';
 import { planHand } from './handPlan.ts';
@@ -157,7 +157,7 @@ function heuristicExplanation(trace: HeuristicTrace, view: PlayerView, decision:
   const context = `上家剩 ${lastCount} 张${Number.isFinite(minOpp) ? `，仍在牌局中的对手最少剩 ${minOpp} 张` : ''}，${trace.danger ? '触发拦截' : '未触发拦截'}${trace.partnerCaution ? '；自己牌力偏弱且队友仍有机会跟牌，倾向让队友接牌' : ''}，普通跟牌代价上限为 ${trace.limit} 分`;
   const comparison = best ? `最小同型普通跟牌中代价最低的是 ${playName(best.play)}，代价 ${formatScore(best.cost)} 分（${best.details!.join('，')}）${nonBomb[1] ? `；另一种 ${playName(nonBomb[1].play)} 为 ${formatScore(nonBomb[1].cost)} 分（${nonBomb[1].details!.join('，')}）` : ''}${best.protectedLoss && best.cost > 14 ? '；该普通跟法会拆散炸弹或同花顺，超过保护阈值' : ''}` : '没有能压过当前牌的普通牌型';
   const tactics = tacticalContext(view);
-  const bomb = bombs[0] ? `；最便宜炸弹为 ${playName(bombs[0].play)}，代价 ${formatScore(bombs[0].cost)} 分（${bombs[0].details!.join('，')}）${tactics.firstOpponentStraight ? '，对手首次出顺子可考虑拦截' : tactics.suppressOpponentComposite ? '，对手出多张牌型冲牌且我方需护航争牌权，可考虑用炸弹压制' : lastCount === 4 && !trace.nearlyDone && minOpp > 2 ? '，上家剩 4 张且局势未到紧急程度，优先保留炸弹' : trace.danger || trace.nearlyDone ? '，符合用炸条件' : '，但当前未满足用炸条件'}` : '；没有可用炸弹';
+  const bomb = bombs[0] ? `；最便宜炸弹为 ${playName(bombs[0].play)}，代价 ${formatScore(bombs[0].cost)} 分（${bombs[0].details!.join('，')}）${tactics.firstOpponentStraight ? '，对手首次出顺子可考虑拦截' : tactics.suppressOpponentComposite ? '，对手出多张牌型冲牌且我方需护航争牌权，可考虑用炸弹压制' : lastCount === 4 && !trace.nearlyDone && minOpp > 2 ? '，上家剩 4 张且局势未到紧急程度，优先保留炸弹' : view.handCounts[view.trick!.lastPlay!.seat] === 0 && decision.type === 'play' && isBomb(decision.play.combo) ? '，拦截对手接风' : trace.danger || trace.nearlyDone ? '，符合用炸条件' : '，但当前未满足用炸条件'}` : '；没有可用炸弹';
   return [
     `${context}。${comparison}${bomb}，因此${decision.type === 'pass' ? '选择不要' : `选择 ${playName(decision.play)}`}。`,
     '普通跟牌优先比较能够管住的最小同型牌，代价过高时可以让牌；炸弹另行比较。对手首次出顺子或剩 5 张时可考虑拦截，剩 4 张时通常更谨慎。',
@@ -263,9 +263,17 @@ export function analyzeAdvancedPlay(view: PlayerView, options: AdvancedOptions =
     else if (!last) reasons.push('没有其他可比较的首出方案。');
     else if (decision.type === 'pass') {
       const legal = generatePlays(view.myHand, view.level, view.config, last.play.combo);
-      reasons.push(legal.length === 0 ? '手中没有能压过当前牌的合法牌型，因此只能不要。' : '可以跟牌，但初级评分认为当前可跟牌的拆牌或用炸代价较高，选择保留手牌。');
+      reasons.push(legal.length === 0 ? '手中没有能压过当前牌的合法牌型，因此只能不要。' : options.tactics !== false && partnerMayFinishPair(view) ? '队友只剩两张且尚未不要，可能用对子接住这手小对子并走完；对手暂不迫近走完，因此先让队友尝试。无法确定队友手牌。' : '可以跟牌，但基础评分认为当前可跟牌的拆牌或用炸代价较高，选择保留手牌。');
     } else if (isBomb(decision.play.combo)) reasons.push('当前需要跟牌；策略结合对手剩余张数和自己的余牌结构，决定使用炸弹争取出牌权。');
     else reasons.push('当前需要跟牌；策略在能压过上家的牌中权衡牌力、拆牌、炸弹和逢人配的代价。');
+  }
+  if (decision.type === 'play' && decision.play.combo.type === 'single' && decision.play.combo.key === BIG_JOKER && last &&
+      teamOf(last.seat) !== teamOf(view.seat) && last.play.combo.type === 'single' &&
+      generatePlays(view.myHand, view.level, view.config, last.play.combo).some(play => isBomb(play.combo))) {
+    reasons.push('需要压对手的单张时，优先用大王接牌，保留炸弹。');
+  }
+  if (decision.type === 'pass' && options.tactics !== false && partnerMayFinishPair(view) && !reasons.some(reason => reason.includes('可能用对子'))) {
+    reasons.push('队友只剩两张且尚未不要，可能用对子接住这手小对子并走完；对手暂不迫近走完，因此先让队友尝试。无法确定队友手牌。');
   }
   return { decision, reasons, insights: buildCoachInsights(view, decision, searchInfo) };
 }

@@ -27,7 +27,7 @@ import {
 import { planHand, type HandPlan } from './handPlan.ts';
 import { fullHousePairCost } from './fullHouseCost.ts';
 import { earlyWildCost } from './wildCost.ts';
-import { tacticalAdjustments, tacticalContext, type TacticalContext } from './tactics.ts';
+import { partnerMayFinishPair, tacticalAdjustments, tacticalContext, type TacticalContext } from './tactics.ts';
 import type { AIDecision, AIPolicy, DecisionContext } from './types.ts';
 
 export interface HeuristicOptions {
@@ -166,6 +166,13 @@ export function generateTacticalPlays(view: PlayerView, toBeat?: Combo | null): 
   return { candidates, flushes };
 }
 
+/** 对手单张可以被大王压住时，不用炸弹代替大王。 */
+export function bigJokerBeforeBomb(view: PlayerView, candidates: readonly Play[]): Play | undefined {
+  const last = view.trick?.lastPlay;
+  if (!last || teamOf(last.seat) === teamOf(view.seat) || last.play.combo.type !== 'single' || !candidates.some(play => isBomb(play.combo))) return undefined;
+  return candidates.find(play => play.combo.type === 'single' && play.combo.key === BIG_JOKER);
+}
+
 export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HEURISTIC, report?: (trace: HeuristicTrace) => void): AIDecision {
   const hand = view.myHand;
   const me = view.seat;
@@ -174,9 +181,10 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
   const { candidates, flushes } = opts.advanced ? generateTacticalPlays(view, toBeat)
     : { candidates: generatePlays(hand, view.level, view.config, toBeat), flushes: [] };
 
-  // 能一手出完就直接出
+  const bigJoker = bigJokerBeforeBomb(view, candidates);
+  // 能一手出完就直接出，但跟对手单张时优先用大王而不是炸弹。
   const finishing = candidates.find((p) => p.cards.length === hand.length);
-  if (finishing) return { type: 'play', play: finishing };
+  if (finishing) return { type: 'play', play: isBomb(finishing.combo) && bigJoker ? bigJoker : finishing };
 
   const opp = opponentsOf(me).filter((s) => view.handCounts[s]! > 0);
   const minOpp = opp.length ? Math.min(...opp.map((s) => view.handCounts[s]!)) : Infinity;
@@ -200,6 +208,9 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
     }
     return { type: 'pass' };
   }
+
+  // 小对子可能让只剩两张的队友直接走完；不能把这个可能性当成确定事实。
+  if (tactics && partnerMayFinishPair(view)) return { type: 'pass' };
 
   const playerCount = view.handCounts[lp.seat]! || view.handCounts[partnerOf(lp.seat)]!;
   const danger = playerCount <= opts.dangerCount || minOpp <= Math.ceil(opts.dangerCount / 2);
@@ -245,16 +256,18 @@ export function choosePlay(view: PlayerView, opts: HeuristicOptions = DEFAULT_HE
   const normalCanBeat = !!best && best.cost <= limit && !(opts.advanced && best.protectedLoss && best.cost > opts.followCostLimit);
   const bestBomb = bombs.reduce<Scored | undefined>((selected, item) => !selected || item.cost < selected.cost ? item : selected, undefined);
   const contest = !!tactics && (tactics.firstOpponentStraight || (tactics.suppressOpponentComposite && !normalCanBeat) || (playerCount === 5 && !normalCanBeat && !lowSingleForPartner));
-  if (contest && bestBomb && playerCount !== 4 && bestBomb.cost <= (best?.cost ?? limit) + 6) return { type: 'play', play: bestBomb.play };
+  if (contest && bestBomb && playerCount !== 4 && bestBomb.cost <= (best?.cost ?? limit) + 6) return { type: 'play', play: bigJoker ?? bestBomb.play };
   if (normalCanBeat) return { type: 'play', play: best.play };
 
   if (bombs.length > 0) {
     const nearlyDone = before.turns <= 2;
     const conserveFour = !!tactics && playerCount === 4 && !nearlyDone && minOpp > 2;
-    const wantBomb = ((danger && !lowSingleForPartner) || nearlyDone || (!!tactics?.suppressOpponentComposite && !normalCanBeat)) && !conserveFour;
+    const opponentJiefeng = !!tactics && view.handCounts[lp.seat] === 0 && view.handCounts[partnerOf(lp.seat)] > 0 &&
+      (!partnerCanAct || lp.play.cards.length > partnerCount);
+    const wantBomb = ((danger && !lowSingleForPartner) || nearlyDone || opponentJiefeng || (!!tactics?.suppressOpponentComposite && !normalCanBeat)) && (!conserveFour || opponentJiefeng);
     if (wantBomb) {
       bombs.sort((a, b) => a.cost - b.cost);
-      return { type: 'play', play: bombs[0]!.play };
+      return { type: 'play', play: bigJoker ?? bombs[0]!.play };
     }
   }
   return { type: 'pass' };

@@ -4,11 +4,11 @@ import {
   type CardId, type GameState, type PlayerView, type Seat,
 } from '@guandan/engine';
 import { randomDeterminizer } from './determinize.ts';
-import { choosePlay, createHeuristicPolicy, DEFAULT_HEURISTIC, generateTacticalPlays, type HeuristicTrace } from './heuristic.ts';
+import { bigJokerBeforeBomb, choosePlay, createHeuristicPolicy, DEFAULT_HEURISTIC, generateTacticalPlays, type HeuristicTrace } from './heuristic.ts';
 import { planHand } from './handPlan.ts';
 import { fullHousePairCost } from './fullHouseCost.ts';
 import { earlyWildCost } from './wildCost.ts';
-import { tacticalAdjustments, tacticalContext } from './tactics.ts';
+import { partnerMayFinishPair, tacticalAdjustments, tacticalContext } from './tactics.ts';
 import { decisionToAction, type AIDecision, type DecisionContext } from './types.ts';
 
 const SAMPLES = 12;
@@ -86,12 +86,14 @@ function candidates(view: PlayerView, fallback: AIDecision, useTactics: boolean)
   const generated = generateTacticalPlays(view, view.trick?.lastPlay?.play.combo).candidates;
   const last = view.trick?.lastPlay;
   const partnerLeads = !!last && teamOf(last.seat) === teamOf(view.seat);
+  const yieldPair = useTactics && partnerMayFinishPair(view);
+  const bigJoker = bigJokerBeforeBomb(view, generated);
   // 接管队友必须由基础策略确认救急或控牌条件，不能由随机分牌的收益绕过。
   // fallback 已保留该类接管；额外候选仅允许一手走完。
-  const plays = partnerLeads ? generated.filter(play => play.cards.length === view.myHand.length) : generated;
+  const plays = generated.filter(play => (!partnerLeads && !yieldPair || play.cards.length === view.myHand.length) && (!bigJoker || !isBomb(play.combo)));
   const choices: AIDecision[] = [fallback];
   const add = (d: AIDecision | undefined) => {
-    if (partnerLeads && d?.type === 'play' && d.play.cards.length !== view.myHand.length) return;
+    if (d?.type === 'play' && ((partnerLeads || yieldPair) && d.play.cards.length !== view.myHand.length || bigJoker && isBomb(d.play.combo))) return;
     if (d && choices.length < MAX_CANDIDATES && !choices.some(c => key(c) === key(d))) choices.push(d);
   };
   if (view.trick?.lastPlay) add({ type: 'pass' });
@@ -102,8 +104,8 @@ function candidates(view: PlayerView, fallback: AIDecision, useTactics: boolean)
   const ranked = trace?.scores.filter(item => !isBomb(item.play.combo)).sort((a, b) => a.cost - b.cost) ?? [];
   add(asDecision(ranked[0]?.play));
   add(asDecision(ranked.find(item => item.play.combo.type !== (fallback.type === 'play' ? fallback.play.combo.type : ranked[0]?.play.combo.type))?.play));
-  // 保证炸弹有机会参与比较，避免候选位被普通牌耗尽。
-  add(asDecision(plays.find(p => isBomb(p.combo))));
+  // 有大王可接对手单张时比较大王，否则保留一个炸弹候选。
+  add(asDecision(bigJoker ?? plays.find(p => isBomb(p.combo))));
   add(asDecision(normal[0]));
   // Include a different shape (or a higher response), then a bomb if space remains.
   add(asDecision(normal.find(p => p.combo.type !== (fallback.type === 'play' ? fallback.play.combo.type : normal[0]?.combo.type)) ?? normal.at(-1)));
@@ -183,6 +185,10 @@ export function selectStableCandidate(totals: readonly number[], winsAgainstFall
 
 /** 每个候选动作使用相同样本；截止时间中断时仅采用完整的一组样本。 */
 export function searchAdvancedWithInfo(view: PlayerView, fallback: AIDecision, ctx?: DecisionContext, allPhases = false, useTactics = true): { decision: AIDecision; samples: number; candidates: number; changed: boolean; scores: readonly { decision: AIDecision; average: number; adjustment: number; adjustmentDetails: readonly Adjustment[]; winsAgainstFallback: number; overbid: boolean; uninterruptedFinishes: number; example?: SimulationExample; examples: readonly SimulationExample[] }[]; worlds: readonly GameState[] } {
+  if (fallback.type === 'play' && isBomb(fallback.play.combo)) {
+    const bigJoker = bigJokerBeforeBomb(view, generatePlays(view.myHand, view.level, view.config, view.trick?.lastPlay?.play.combo));
+    if (bigJoker) fallback = { type: 'play', play: bigJoker };
+  }
   const noSearch = { decision: fallback, samples: 0, candidates: 0, changed: false, scores: [], worlds: [] };
   if (view.phase !== 'playing' || (!allPhases && view.handCounts.reduce((a, b) => a + b, 0) > MAX_REMAINING_CARDS) ||
       view.playedCards.length + view.handCounts.reduce((a, b) => a + b, 0) !== DECK_SIZE ||

@@ -72,6 +72,16 @@ export function tacticalContext(view: PlayerView): TacticalContext {
     opening: view.playedCards.length < 10, firstOpponentStraight, suppressOpponentComposite, controlCards: controls + plan.bombs.length };
 }
 
+/** 队友可能用最后两张接小对子；只在对手没有迫近走完时让出机会。 */
+export function partnerMayFinishPair(view: PlayerView): boolean {
+  const last = view.trick?.lastPlay;
+  const partner = partnerOf(view.seat);
+  if (!last || teamOf(last.seat) === teamOf(view.seat) || last.play.combo.type !== 'pair' ||
+      last.play.combo.key > 10 || view.handCounts[partner] !== 2 || view.trick?.passed.includes(partner)) return false;
+  const opponents = [nextSeat(view.seat), nextSeat(partner)].map(seat => view.handCounts[seat]).filter(count => count > 0);
+  return opponents.length > 0 && opponents.every(count => count > 3);
+}
+
 /** 对候选行动增减代价（越低越有利）；不会把未知手牌当作事实。 */
 export function tacticalAdjustments(view: PlayerView, play: Play, context: TacticalContext): TacticalAdjustment[] {
   const result: TacticalAdjustment[] = [];

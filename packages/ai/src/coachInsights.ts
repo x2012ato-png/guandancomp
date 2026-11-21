@@ -1,4 +1,4 @@
-import { cardLabel, cardOf, cardPower, comboLabel, makeDeck, partnerOf, rankLabel, sortHand, suitLabel, teamOf, type CardId, type PlayerView, type Seat, type TrickState } from '@guandan/engine';
+import { BIG_JOKER, LEVEL_POWER, SMALL_JOKER, cardLabel, cardOf, cardPower, comboLabel, makeDeck, partnerOf, rankLabel, sortHand, suitLabel, teamOf, type CardId, type PlayerView, type Seat, type TrickEntry, type TrickState } from '@guandan/engine';
 import { planHand } from './handPlan.ts';
 import { tacticalAdjustments, tacticalContext } from './tactics.ts';
 import type { AIDecision } from './types.ts';
@@ -51,6 +51,35 @@ function grouping(view: PlayerView, decision: PlayDecision): string {
   return `按当前建议${decision.type === 'play' ? '出牌后' : '保留手牌'}，可参考分组：${groups.join('；')}。三张和对子可考虑组成三带二；这是参考拆分，实际能否按顺序出完取决于后续牌权。`;
 }
 
+interface HighSingleEvidence { acePass: boolean; levelPass: boolean; jokerPlayedAfterLevelPass: boolean }
+
+/** 每次不要归因于之前最近的一手牌；新一轮总以出牌开始。 */
+function highSingleEvidence(view: PlayerView): Map<Seat, HighSingleEvidence> {
+  const evidence = new Map<Seat, HighSingleEvidence>();
+  const histories: readonly (readonly TrickEntry[])[] = view.publicHistory?.length
+    ? [view.publicHistory] : [view.previousTrick?.history ?? [], view.trick?.history ?? []];
+  for (const history of histories) {
+    let last: TrickEntry | null = null;
+    for (const entry of history) {
+      if (entry.play) {
+        const prior = evidence.get(entry.seat);
+        if (prior?.levelPass && entry.play.cards.some(card => cardOf(card).rank >= SMALL_JOKER)) prior.jokerPlayedAfterLevelPass = true;
+        last = entry;
+        continue;
+      }
+      if (!last?.play || last.seat !== view.seat || teamOf(entry.seat) === teamOf(view.seat) || last.play.combo.type !== 'single') continue;
+      const isLevel = last.play.combo.key === LEVEL_POWER;
+      const isAce = cardOf(last.play.cards[0]!).rank === 14 && !isLevel;
+      if (!isLevel && !isAce) continue;
+      const prior = evidence.get(entry.seat) ?? { acePass: false, levelPass: false, jokerPlayedAfterLevelPass: false };
+      if (isAce) prior.acePass = true;
+      if (isLevel) { prior.levelPass = true; prior.jokerPlayedAfterLevelPass = false; }
+      evidence.set(entry.seat, prior);
+    }
+  }
+  return evidence;
+}
+
 function possibilities(view: PlayerView): string[] {
   const visible = new Set([...view.myHand, ...view.playedCards]);
   // 贡牌的归属有时无法确认；未知还贡可能把贡牌原样还回。
@@ -62,6 +91,7 @@ function possibilities(view: PlayerView): string[] {
   }
   const unseen = makeDeck().filter(card => !visible.has(card));
   const tricks = [view.previousTrick, view.trick].filter((trick): trick is TrickState => !!trick);
+  const highSingles = highSingleEvidence(view);
   return [1, 2, 3].map(offset => {
     const seat = ((view.seat + offset) % 4) as Seat;
     if (!view.handCounts[seat]) return `${seatName(view, seat)}已经出完。`;
@@ -98,8 +128,18 @@ function possibilities(view: PlayerView): string[] {
       const recent = (view.publicHistory ?? []).filter(entry => entry.seat === seat && entry.play).at(-1)?.play;
       if (recent) observations.push(`曾出${comboLabel(recent.combo)} ${recent.cards.map(cardLabel).join('、')}，说明当时有这种牌型`);
     }
+    const evidence = highSingles.get(seat);
+    if (evidence?.levelPass) {
+      const source = evidence.acePass ? `曾对你的单 A 和级牌单 ${rankLabel(view.level)} 都不要` : `曾对你的级牌单 ${rankLabel(view.level)} 不要`;
+      const fixedJokers = fixed.filter(card => cardOf(card).rank === SMALL_JOKER || cardOf(card).rank === BIG_JOKER);
+      if (fixedJokers.length) details.unshift(`${source}；但进还贡记录表明其现在持有 ${fixedJokers.map(cardLabel).join('、')}，不能判断其没有王`);
+      else if (evidence.jokerPlayedAfterLevelPass) details.unshift(`${source}；但之后曾出过王，不能据此断定其当时没有王`);
+      else details.unshift(`${source}，可能没有王，单张控牌能力可能较弱；也可能有王但选择保留或战术让牌，不能确定`);
+    } else if (evidence?.acePass) {
+      details.unshift('曾对你的单 A 不要，可能缺少更大的单牌，但也可能保留级牌或王，不能断定没有王');
+    }
     if (observations.length) details.push(...observations.slice(-2), '这些出牌线索只能反映当时的手牌，不能确定现在仍持有什么');
-    else details.push('暂无可用于判断其牌力的出牌记录');
+    else if (!evidence) details.push('暂无可用于判断其牌力的出牌记录');
     return `${seatName(view, seat)}：${details.join('；')}。`;
   });
 }

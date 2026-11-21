@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,6 +43,150 @@ afterEach(async () => {
   rmSync(logDirectory, { recursive: true, force: true });
 });
 describe('room service', () => {
+  it('两个 LM Studio 机器人在真实牌局中独立续接会话并增量同步', async () => {
+    const requests: any[] = [];
+    let resolveThird: (() => void) | undefined;
+    const thirdRequest = new Promise<void>(resolve => { resolveThird = resolve; });
+    let resolveFifth: (() => void) | undefined;
+    const fifthRequest = new Promise<void>(resolve => { resolveFifth = resolve; });
+    const provider = createServer((req, res) => {
+      let body = '';
+      req.on('data', chunk => { body += String(chunk); });
+      req.on('end', () => {
+        requests.push({ path: req.url, body: JSON.parse(body) });
+        if (requests.length === 3) { res.writeHead(500); res.end(); resolveThird?.(); return; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ response_id: `resp_${requests.length}`, output: [{ type: 'message', content: '{"choice":0}' }] }));
+        if (requests.length === 5) resolveFifth?.();
+      });
+    });
+    await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = provider.address();
+      if (!address || typeof address === 'string') throw new Error('Missing mock address');
+      const host = await connect(undefined, 'Host');
+      const guest = await connect(undefined, 'Guest');
+      const created = await host.socket.emitWithAck('room:create', { config: { firstLeader: 2 } });
+      if (!created.ok) throw new Error('Room creation failed');
+      expect((await guest.socket.emitWithAck('room:join', { roomId: created.data.roomId })).ok).toBe(true);
+      expect((await host.socket.emitWithAck('room:sit', { seat: 0 })).ok).toBe(true);
+      expect((await guest.socket.emitWithAck('room:sit', { seat: 1 })).ok).toBe(true);
+      const config = { apiType: 'lmstudio' as const, baseUrl: `http://127.0.0.1:${address.port}`, apiKey: '' };
+      expect((await host.socket.emitWithAck('room:addBot', { seat: 2, botKind: 'external', externalAI: { ...config, model: 'bot-two' } })).ok).toBe(true);
+      expect((await host.socket.emitWithAck('room:addBot', { seat: 3, botKind: 'external', externalAI: { ...config, model: 'bot-three' } })).ok).toBe(true);
+      const humanTurn = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { host.socket.off('game:update', onUpdate); reject(new Error('Bots did not complete their turns')); }, DEAL_DURATION_MS + 8000);
+        const onUpdate = (update: GameUpdate) => {
+          if (!update.dealing && update.view.turn === 0) { clearTimeout(timer); host.socket.off('game:update', onUpdate); resolve(); }
+        };
+        host.socket.on('game:update', onUpdate);
+      });
+      expect((await host.socket.emitWithAck('room:start')).ok).toBe(true);
+      await humanTurn;
+      expect((await host.socket.emitWithAck('game:action', { type: 'pass' })).ok).toBe(true);
+      const humanTurnAgain = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { host.socket.off('game:update', onUpdate); reject(new Error('Bots did not recover')); }, 10000);
+        const onUpdate = (update: GameUpdate) => {
+          if (!update.dealing && update.view.turn === 0) { clearTimeout(timer); host.socket.off('game:update', onUpdate); resolve(); }
+        };
+        host.socket.on('game:update', onUpdate);
+      });
+      expect((await guest.socket.emitWithAck('game:action', { type: 'pass' })).ok).toBe(true);
+      await thirdRequest;
+      await humanTurnAgain;
+      expect((await host.socket.emitWithAck('game:action', { type: 'pass' })).ok).toBe(true);
+      expect((await guest.socket.emitWithAck('game:action', { type: 'pass' })).ok).toBe(true);
+      await fifthRequest;
+      expect(requests.map(request => request.path)).toEqual(Array(5).fill('/api/v1/chat'));
+      expect(requests.map(request => request.body.model)).toEqual(['bot-two', 'bot-three', 'bot-two', 'bot-three', 'bot-two']);
+      expect(requests[0].body).not.toHaveProperty('previous_response_id');
+      expect(requests[1].body).not.toHaveProperty('previous_response_id');
+      expect(requests[2].body.previous_response_id).toBe('resp_1');
+      expect(JSON.parse(requests[0].body.input).mode).toBe('snapshot');
+      expect(JSON.parse(requests[1].body.input).mode).toBe('snapshot');
+      expect(JSON.parse(requests[2].body.input).mode).toBe('incremental');
+      expect(JSON.parse(requests[2].body.input).publicHistoryAppend.length).toBeGreaterThan(0);
+      expect(requests[3].body.previous_response_id).toBe('resp_2');
+      expect(requests[4].body).not.toHaveProperty('previous_response_id');
+      expect(JSON.parse(requests[4].body.input).mode).toBe('snapshot');
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  }, DEAL_DURATION_MS + 20000);
+
+  it('房主可按座位配置外部 AI，密钥不广播，游戏实际调用该接口', async () => {
+    let requestBody: any;
+    let authorization: string | undefined;
+    const provider = createServer((req, res) => {
+      authorization = req.headers.authorization;
+      let body = '';
+      req.on('data', chunk => { body += String(chunk); });
+      req.on('end', () => {
+        requestBody = JSON.parse(body);
+        if (requestBody.model === 'broken-model') { res.writeHead(500); res.end(); return; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ choices: [{ message: { content: '{"choice":0}' } }] }));
+      });
+    });
+    await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = provider.address();
+      if (!address || typeof address === 'string') throw new Error('Missing mock address');
+      const host = await connect(undefined, 'Host');
+      const guest = await connect(undefined, 'Guest');
+      const created = await host.socket.emitWithAck('room:create', { config: { firstLeader: 2 } });
+      if (!created.ok) throw new Error('Room creation failed');
+      expect((await guest.socket.emitWithAck('room:join', { roomId: created.data.roomId })).ok).toBe(true);
+      expect((await host.socket.emitWithAck('room:sit', { seat: 0 })).ok).toBe(true);
+      expect((await guest.socket.emitWithAck('room:sit', { seat: 1 })).ok).toBe(true);
+      const externalAI = { baseUrl: `http://127.0.0.1:${address.port}/v1`, model: 'mock-model', apiKey: 'test-secret' };
+      expect((await guest.socket.emitWithAck('room:addBot', { seat: 2, botKind: 'external', externalAI })).ok).toBe(false);
+      const hostRoom = new Promise<Parameters<ServerToClientEvents['room:state']>[0]>(resolve => host.socket.once('room:state', resolve));
+      const guestRoom = new Promise<Parameters<ServerToClientEvents['room:state']>[0]>(resolve => guest.socket.once('room:state', resolve));
+      expect((await host.socket.emitWithAck('room:addBot', { seat: 2, botKind: 'external', externalAI })).ok).toBe(true);
+      const [hostState, guestState] = await Promise.all([hostRoom, guestRoom]);
+      expect(hostState.seats[2].externalAI).toEqual({ baseUrl: externalAI.baseUrl, model: externalAI.model });
+      expect(guestState.seats[2].externalAI).toBeNull();
+      expect(JSON.stringify(hostState)).not.toContain(externalAI.apiKey);
+      expect(JSON.stringify(guestState)).not.toContain(externalAI.apiKey);
+      expect((await guest.socket.emitWithAck('room:configureBot', { seat: 2, externalAI })).ok).toBe(false);
+      expect((await host.socket.emitWithAck('room:addBot', { seat: 3, botKind: 'beginner' })).ok).toBe(true);
+      const played = new Promise<GameUpdate>((resolve, reject) => {
+        const timer = setTimeout(() => { host.socket.off('game:update', onUpdate); reject(new Error('External AI did not play')); }, DEAL_DURATION_MS + 8000);
+        const onUpdate = (update: GameUpdate) => {
+          if (update.events.some(event => event.type === 'played' && event.seat === 2)) {
+            clearTimeout(timer); host.socket.off('game:update', onUpdate); resolve(update);
+          }
+        };
+        host.socket.on('game:update', onUpdate);
+      });
+      expect((await host.socket.emitWithAck('room:start')).ok).toBe(true);
+      await played;
+      expect(authorization).toBe('Bearer test-secret');
+      expect(requestBody.model).toBe('mock-model');
+      const context = JSON.parse(requestBody.messages[1].content);
+      expect(context.view.seat).toBe(2);
+      expect(context.view.myHand).toHaveLength(27);
+      expect(context.view).not.toHaveProperty('hands');
+      const failedNotice = new Promise<Parameters<ServerToClientEvents['notice']>[0]>(resolve => host.socket.once('notice', resolve));
+      const fallback = new Promise<GameUpdate>((resolve, reject) => {
+        const timer = setTimeout(() => { host.socket.off('game:update', onUpdate); reject(new Error('Fallback AI did not act')); }, 8000);
+        const onUpdate = (update: GameUpdate) => {
+          if (update.events.some(event => (event.type === 'played' || event.type === 'passed') && event.seat === 3)) {
+            clearTimeout(timer); host.socket.off('game:update', onUpdate); resolve(update);
+          }
+        };
+        host.socket.on('game:update', onUpdate);
+      });
+      expect((await host.socket.emitWithAck('room:configureBot', { seat: 3, externalAI: { ...externalAI, model: 'broken-model' } })).ok).toBe(true);
+      expect((await failedNotice).message).toContain('暂用内置 AI');
+      await fallback;
+      expect((await host.socket.emitWithAck('room:configureBot', { seat: 2, externalAI: { ...externalAI, model: 'updated-model', apiKey: '' } })).ok).toBe(true);
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  }, DEAL_DURATION_MS + 12000);
+
   it('adds both AI types and sends coach guidance only to its human partner on their turn', async () => {
     const host = await connect(undefined, 'Coached player');
     const opponent = await connect(undefined, 'Opponent');
