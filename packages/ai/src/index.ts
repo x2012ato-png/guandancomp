@@ -4,3 +4,4 @@ export * from './heuristic.ts';
 export * from './tactics.ts';
 export * from './advanced.ts';
 export * from './determinize.ts';
+export * from './danzero.ts';

@@ -53,7 +53,7 @@ export interface SessionInfo {
 }
 
 export type SeatKind = 'empty' | 'human' | 'bot';
-export type BotKind = 'beginner' | 'coach' | 'external';
+export type BotKind = 'beginner' | 'coach' | 'danzero' | 'external';
 
 export type ExternalAIAPI = 'openai' | 'lmstudio';
 
@@ -161,7 +161,7 @@ export interface ClientToServerEvents {
   'room:sit': (p: { seat: Seat }, ack: AckFn) => void;
   'room:stand': (ack: AckFn) => void;
   'room:addBot': (p: { seat: Seat; botKind?: BotKind; externalAI?: ExternalAISettings }, ack: AckFn) => void;
-  'room:configureBot': (p: { seat: Seat; externalAI: ExternalAISettings }, ack: AckFn) => void;
+  'room:configureBot': (p: { seat: Seat; botKind?: BotKind; externalAI?: ExternalAISettings }, ack: AckFn) => void;
   'room:removeBot': (p: { seat: Seat }, ack: AckFn) => void;
   'room:start': (ack: AckFn) => void;
   'game:action': (p: ClientGameAction, ack: AckFn) => void;
