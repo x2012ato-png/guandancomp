@@ -9,14 +9,27 @@
  * 第 1 层 `567 -> 512` 的前 513 维矩阵乘法只需每个回合计算 1 次，每个候选动作只需计算后 54 维中非零的 1~10 张牌！
  */
 import {
+  DECK_SIZE,
   generatePlays,
+  makeRandom,
+  pendingActors,
+  reduce,
+  teamOf,
+  toPlayerView,
   validReturnCards,
   validTributeCards,
   type CardId,
+  type GameState,
   type Play,
   type PlayerView,
+  type Seat,
 } from '@guandan/engine';
-import type { AIDecision, AIPolicy } from './types.ts';
+import { sampleAdvancedWorld } from './advancedSearch.ts';
+import { planHand } from './handPlan.ts';
+import { createHeuristicPolicy } from './heuristic.ts';
+import { decisionToAction, type AIDecision, type AIPolicy, type DecisionContext } from './types.ts';
+
+const fastRolloutPolicy = createHeuristicPolicy({ advanced: true });
 
 interface Layer {
   readonly inDim: number;
@@ -522,9 +535,10 @@ function chooseDanZeroReturn(view: PlayerView): CardId {
   return best;
 }
 
-export function chooseDanZeroPlay(view: PlayerView): AIDecision {
+export function rankDanZeroCandidates(view: PlayerView): { decision: AIDecision; q: number }[] {
   const candidates = buildDanZeroCandidates(view);
-  if (candidates.length === 1) return candidates[0]!;
+  if (candidates.length === 0) return [];
+  if (candidates.length === 1) return [{ decision: candidates[0]!, q: 0 }];
 
   const feature = new Int8Array(567);
   encodeDanZeroState513(view, feature);
@@ -533,8 +547,7 @@ export function chooseDanZeroPlay(view: PlayerView): AIDecision {
   const scratchA = new Float32Array(512);
   const scratchB = new Float32Array(512);
 
-  let bestIdx = 0;
-  let bestQ = -Infinity;
+  const scored: { decision: AIDecision; q: number }[] = [];
   for (let idx = 0; idx < candidates.length; idx++) {
     const choice = candidates[idx]!;
     if (choice.type === 'pass') {
@@ -543,28 +556,162 @@ export function chooseDanZeroPlay(view: PlayerView): AIDecision {
       card2arrayInto(choice.play.cards.map(cardIdToDanZeroNum), feature, 513);
     }
     const q = evaluateDanZeroActionQ(feature, baseHidden, scratchA, scratchB);
-    if (q > bestQ) {
-      bestQ = q;
-      bestIdx = idx;
+    scored.push({ decision: choice, q });
+  }
+  scored.sort((a, b) => b.q - a.q);
+  return scored;
+}
+
+export function chooseDanZeroPlay(view: PlayerView): AIDecision {
+  const ranked = rankDanZeroCandidates(view);
+  return ranked[0]!.decision;
+}
+
+function decisionKey(decision: AIDecision): string {
+  if (decision.type !== 'play') return decision.type;
+  const p = decision.play;
+  return `${p.combo.type}:${p.combo.key}:${p.combo.suit ?? ''}:${[...p.cards].sort((a, b) => a - b).join(',')}`;
+}
+
+function evaluateLeafState(state: GameState, seat: Seat): number {
+  const team = teamOf(seat);
+  if ((state.phase === 'handOver' || state.phase === 'matchOver') && state.lastResult) {
+    const won = state.lastResult.winTeam === team;
+    return (won ? 1 : -1) * state.lastResult.upgrade;
+  }
+  const ours = state.hands[team]!.length + state.hands[team + 2]!.length;
+  const theirs = state.hands[1 - team]!.length + state.hands[3 - team]!.length;
+  const plans = state.hands.map((hand) => planHand(hand, state.level));
+  const resources = plans.map((plan) => plan.bombs.length + plan.wilds.length * 0.5);
+  const resourcesDiff = resources[team]! + resources[team + 2]! - resources[1 - team]! - resources[3 - team]!;
+  const owner = state.trick?.lastPlay?.seat ?? state.turn;
+  const control = owner == null ? 0 : teamOf(owner) === team ? 0.08 : -0.08;
+  const first = state.finishOrder[0];
+  const second = state.finishOrder[1];
+  const finish =
+    first == null
+      ? 0
+      : (teamOf(first) === team ? 1.8 : -1.8) + (second == null ? 0 : teamOf(second) === team ? 0.15 : -0.15);
+  return ((theirs - ours) / DECK_SIZE) * 2.5 + resourcesDiff * 0.08 + control + finish;
+}
+
+/**
+ * DanZero+（深度搜索版）：
+ *   1. 使用 DanZero 价值网络对当前所有合法动作评分，筛选 Top-K 候选动作（最多 4 个不同牌型/动作）
+ *   2. 在采样出的未知手牌世界（Determinization）中，使用高速启发式推演策略向前模拟多步至残局/终局，
+ *      叶节点由 DanZero 神经网络 Q 值与局面资源联合估值
+ *   3. 综合先验 Q(s, a) 与多世界蒙特卡洛推演回报选出最优动作
+ */
+export function chooseDanZeroDeepPlay(
+  view: PlayerView,
+  options: { samples?: number; topK?: number; rolloutDepth?: number } = {},
+  ctx?: DecisionContext,
+): AIDecision {
+  const ranked = rankDanZeroCandidates(view);
+  if (ranked.length <= 1) return ranked[0]!.decision;
+
+  const topK = options.topK ?? 4;
+  const maxSamples = options.samples ?? 6;
+  const totalRemaining = view.handCounts.reduce((a, b) => a + b, 0);
+  const rolloutDepth = options.rolloutDepth ?? (totalRemaining <= 20 ? 32 : 12);
+
+  // Pick top-K distinct candidates
+  const topCandidates: { decision: AIDecision; q: number }[] = [];
+  const seenKeys = new Set<string>();
+  for (const item of ranked) {
+    const k = decisionKey(item.decision);
+    if (!seenKeys.has(k)) {
+      seenKeys.add(k);
+      topCandidates.push(item);
+      if (topCandidates.length >= topK) break;
     }
   }
-  return candidates[bestIdx]!;
+  if (topCandidates.length < 2) return ranked[0]!.decision;
+
+  // If top candidate is clearly better than second best (e.g. > 0.35 Q-value gap), skip rollout
+  if (topCandidates[0]!.q - topCandidates[1]!.q > 0.35) {
+    return topCandidates[0]!.decision;
+  }
+
+  const seed = `dz-deep:${view.handNo}:${view.seat}:${[...view.myHand].sort((a, b) => a - b)}:${view.playedCards.join(',')}`;
+  const rng = ctx?.rng ?? makeRandom(seed);
+  const totals = topCandidates.map(() => 0);
+  const winsAgainstTop = topCandidates.map(() => 0);
+  let completed = 0;
+
+  for (let s = 0; s < maxSamples; s++) {
+    if (ctx?.deadline !== undefined && Date.now() >= ctx.deadline) break;
+    const world = sampleAdvancedWorld(view, rng);
+    const sampleScores: number[] = [];
+
+    for (const candidate of topCandidates) {
+      if (ctx?.deadline !== undefined && Date.now() >= ctx.deadline) break;
+      const initial = reduce(world, decisionToAction(view.seat, candidate.decision));
+      if (!initial.ok) {
+        sampleScores.push(-3);
+        continue;
+      }
+      let current = initial.state;
+      for (let step = 0; step < rolloutDepth && current.phase === 'playing'; step++) {
+        if (ctx?.deadline !== undefined && Date.now() >= ctx.deadline) break;
+        const actor = pendingActors(current)[0];
+        if (actor === undefined) break;
+        const nextAction = fastRolloutPolicy.decide(toPlayerView(current, actor));
+        if (!nextAction) break;
+        const res = reduce(current, decisionToAction(actor, nextAction));
+        if (!res.ok) break;
+        current = res.state;
+      }
+      sampleScores.push(evaluateLeafState(current, view.seat));
+    }
+
+    if (sampleScores.length !== topCandidates.length) break;
+    for (let i = 0; i < topCandidates.length; i++) {
+      totals[i]! += sampleScores[i]!;
+      if (i > 0 && sampleScores[i]! > sampleScores[0]!) winsAgainstTop[i]!++;
+    }
+    completed++;
+  }
+
+  if (completed < 2) return topCandidates[0]!.decision;
+
+  // Combine DanZero prior Q(s,a) (weight 0.6) with Monte Carlo rollout return (weight 0.4)
+  let bestIdx = 0;
+  let bestCombined = topCandidates[0]!.q * 0.6 + (totals[0]! / completed) * 0.4;
+  for (let i = 1; i < topCandidates.length; i++) {
+    const combined = topCandidates[i]!.q * 0.6 + (totals[i]! / completed) * 0.4;
+    if (winsAgainstTop[i]! >= Math.ceil(completed * 0.7) && combined > bestCombined + 0.04) {
+      bestCombined = combined;
+      bestIdx = i;
+    }
+  }
+  return topCandidates[bestIdx]!.decision;
+}
+
+export interface DanZeroOptions {
+  /** 是否开启多步蒙特卡洛深度推演（DanZero+ 深度版） */
+  readonly deep?: boolean;
+  readonly samples?: number;
+  readonly topK?: number;
+  readonly rolloutDepth?: number;
 }
 
 /**
  * 创建内置的 DanZero 深度蒙特卡洛（DMC）策略。
+ * - `deep: false`（默认）：0 层直觉版（纯神经网络单步推理，~5ms）
+ * - `deep: true`：深度推演版（神经网络 Top-K 初筛 + 多世界深度推演，~200-600ms）
  */
-export function createDanZeroPolicy(): AIPolicy {
+export function createDanZeroPolicy(options: DanZeroOptions = {}): AIPolicy {
   return {
-    id: 'danzero',
-    decide(view: PlayerView): AIDecision | null {
+    id: options.deep ? 'danzero-plus' : 'danzero',
+    decide(view: PlayerView, ctx?: DecisionContext): AIDecision | null {
       switch (view.myDuty) {
         case 'tribute':
           return { type: 'tribute', card: chooseDanZeroTribute(view) };
         case 'return':
           return { type: 'returnTribute', card: chooseDanZeroReturn(view) };
         case 'play':
-          return chooseDanZeroPlay(view);
+          return options.deep ? chooseDanZeroDeepPlay(view, options, ctx) : chooseDanZeroPlay(view);
         default:
           return null;
       }
