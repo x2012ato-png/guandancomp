@@ -1,0 +1,93 @@
+
+Development Plan: 掼蛋游戏 AI 补位微服务集成（Node.js + Python Coach）
+
+
+1. 项目背景与架构目标
+
+• 现有系统：基于 Node.js 的掼蛋游戏后端。
+• AI 核心来源：剥离开源项目 https://github.com 中 coach/ 目录下的现成规则算法（如 EggPan 队伍代码）。
+• 核心架构：采用无状态微服务模式（Stateless Microservice）。
+	• Python AI Service (FastAPI)：封装剥离出来的 coach 算法，暴露标准 HTTP RESTful API，单次推理纯 CPU 运行（< 10ms）。
+	• Node.js Game Server (现有后端)：当房间缺人由 AI 托管且轮到 AI 行动时，构造当前牌局快照请求 Python 接口，校验返回结果并增加拟人化延迟后广播出牌。
+
+2. 目录结构规划
+
+建议在现有项目中新增 ai-service/ 目录，与 Node.js 主服务同级（部署时可用 PM2 或 Docker Compose 共同管理）：
+Show Code
+Download diagram SVG
+
+3. 前后端通信协议设计（API Contract）
+
+
+接口定义
+
+• URL: POST http://127.0.0
+• Timeout: 500ms（超时直接触发 Node.js 端兜底出牌）
+
+Request Payload (Node.js -> Python)
+
+json
+{
+  "room_id": "room_1001",
+  "action_type": "play",          // 枚举: "play"(出牌), "tribute"(进贡), "back"(还贡)
+  "seat_id": 2,                   // 当前AI座位号 (0,1,2,3; 0&2同队, 1&3同队)
+  "cur_rank": "5",                // 当前级牌 ("2"-"A")，决定红桃级牌为逢人配
+  "hand_cards": ["H5", "SA", "SK", "D10", "D10"], // AI当前手牌 (花色S/H/C/D + 点数2-9,T,J,Q,K,A, 大小王SB/HR)
+  "last_move": {                  // 当前牌面需要管上的最大一手牌（首发时为 null）
+    "seat_id": 1,
+    "type": "Pair",
+    "cards": ["C9", "D9"]
+  },
+  "played_cards_history": ["H3", "S3", "C9", "D9"], // 本局已出过的所有牌
+  "remain_counts": [27, 25, 27, 27] // 0,1,2,3号位各自剩余手牌数
+}
+Use code with caution.
+
+Response Payload (Python -> Node.js)
+
+json
+{
+  "code": 0,
+  "cards": ["CK", "DK"],          // 要出的牌列表；Pass(不出)时返回空数组 []
+  "latency_ms": 4.2
+}
+Use code with caution.
+
+4. 分阶段实施任务清单（交给 Antigravity 执行）
+
+
+Phase 1: Python AI 推理服务剥离与封装 (ai-service/)
+
+1. 代码剥离与清理：
+	• 从 NUAA-guandan 仓库提取 coach/ 目录及必要的牌型解析工具函数（检查 util.py 及 coach/__init__.py 中的依赖，剔除 torch 训练相关依赖，仅保留纯 Python / NumPy 逻辑）。
+	• 重点分析 EggPan（或 coach 中胜率最高的代理类）的入口方法签名（通常是接收 message 字典并返回动作索引或牌面列表）。
+2. 编写数据适配器 (adapter.py)：
+	• 实现卡牌编码映射表：将 Node.js 传入的标准卡牌字符串（如 "H5", "SB", "HR"）双向转换为 NUAA-guandan 模拟器所需的原始数据结构（如 ["H", "5"] 或特定整数编码）。
+	• 实现状态构造器：把 JSON 中的 hand_cards、last_move、cur_rank、remain_counts 拼装成 coach 期望的完整上下文对象（含进贡、还贡、正常出牌三种分支的兼容）。
+	• 实现无状态隔离：确保每次 HTTP 请求实例化或重置独立的上下文，防止多房间并发时出现状态串扰。
+3. 搭建 FastAPI 服务 (main.py)：
+	• 使用 Pydantic 定义强类型请求/响应模型。
+	• 添加全局异常捕获（若内部算法抛出异常，记录日志并安全返回 cards: [] 或触发降级）。
+	• 编写 test_api.py 单元测试脚本，模拟首发、跟牌、队友出大牌过牌、进还贡 4 种典型场景验证输出合法性。
+
+Phase 2: Node.js 游戏后端集成 (node-server/)
+
+1. 编写卡牌格式转换工具：
+	• 将 Node.js 现有的内部卡牌对象（如 { suit: 'heart', rank: 5 } 或数字 ID 0~107）无损转换为协议约定的标准字符串（"H5"）。
+2. 实现 AI 调度服务 (aiBotService.js)：
+	• 触发钩子：在现有回合流转状态机中，当 currentPlayer.isBot === true 时调用 requestBotAction(roomState)。
+	• HTTP 客户端：使用 axios 或原生 fetch（设置 AbortController 500ms 强超时）请求 Python 服务。
+	• 拟人化延迟（UX 优化）：拿到响应后不立即广播，计算动态延迟 delay = random(800, 1800) ms（若返回 Pass 则缩短为 random(500, 900) ms）后再提交出牌动作。
+3. 安全兜底机制（Safety Fallback - 极其重要）：
+	• 二次规则校验：AI 返回的 cards 必须经过 Node.js 现有的 validateMove() 函数校验。
+	• 自动降级策略：一旦发生以下任一情况——① Python 服务超时/报错、② 返回的牌不在 AI 手牌中、③ 牌型不合法或管不上 last_move——立即执行本地兜底：
+		• 如果是首发（自由出牌）：自动打出 AI 手牌中点数最小的一张单牌。
+		• 如果是跟牌：自动执行 Pass（不出）。
+		• 如果是进贡/还贡：自动选择合法范围内的最大/最小牌。
+
+Phase 3: 联调、压测与部署
+
+1. 四机器人自动化压测：在 Node.js 端开启 10 个测试房间，4 个座位全部设为 AI Bot 自动对打 100 局，验证：
+	• 零死锁、零非法出牌报错、房间能正常完成“升级 -> 进贡 -> 还贡 -> 结算”完整闭环。
+	• 单机并发下 Python 服务的 CPU 占用与平均响应延迟（目标 < 15ms）。
+2. 进程守护配置：提供 ecosystem.config.js (PM2) 或 Dockerfile，确保 Python 服务（使用 uvicorn main:app --workers 4）随 Node.js 服务一同启动并自动重启。

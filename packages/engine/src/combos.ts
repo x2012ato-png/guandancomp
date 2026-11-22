@@ -29,16 +29,16 @@ import type { Combo, ComboSignature, ComboType, Play, RuleError, WildAssignment 
 
 /* ───────────────────────── 比较 ───────────────────────── */
 
-/** 炸弹等级：4炸 < 5炸 < 同花顺 < 6炸 < 7炸 < 8炸 < 天王炸；非炸弹为 0 */
+/** 炸弹等级：4炸 < 5炸 < 同花顺 < 6炸 < 7炸 < 8炸 < 9炸 < 10炸 < 天王炸；非炸弹为 0 */
 export function bombTier(c: Combo): number {
   switch (c.type) {
     case 'bomb':
-      // 4→1, 5→2, (同花顺=3), 6→4, 7→5, 8→6
+      // 4→1, 5→2, (同花顺=3), 6→4, 7→5, 8→6, 9→7, 10→8
       return c.size <= 5 ? c.size - 3 : c.size - 2;
     case 'straightFlush':
       return 3;
     case 'jokerBomb':
-      return 7;
+      return 9;
     default:
       return 0;
   }
@@ -116,7 +116,7 @@ function sameRankTemplate(rank: Rank, count: number, level: Level): Template {
 
 function buildTemplates(size: number, level: Level, cfg: RulesConfig): readonly Template[] {
   const t: Template[] = [];
-  if (size >= 1 && size <= 8) {
+  if (size >= 1 && size <= 10) {
     for (const r of NATURAL_RANKS) t.push(sameRankTemplate(r, size, level));
     if (size <= 2) {
       t.push(sameRankTemplate(SMALL_JOKER, size, level));
@@ -234,7 +234,7 @@ function identityCount(play: Play, level: Level): number {
  */
 export function interpret(cardIds: readonly CardId[], level: Level, cfg: RulesConfig): Play[] {
   const n = cardIds.length;
-  if (n === 0 || n > 8 || new Set(cardIds).size !== n) return [];
+  if (n === 0 || n > 10 || new Set(cardIds).size !== n) return [];
   const wilds = cardIds.filter((id) => isWild(id, level)).sort((a, b) => a - b);
   const naturalIds = cardIds.filter((id) => !isWild(id, level));
   const naturals = naturalIds.map(cardOf);
@@ -265,7 +265,7 @@ export function interpret(cardIds: readonly CardId[], level: Level, cfg: RulesCo
 /** 独立校验一手出牌（含客户端自带的 wildAssignments） */
 export function validatePlay(play: Play, level: Level, cfg: RulesConfig): RuleError | null {
   const ids = play.cards;
-  if (ids.length === 0 || ids.length > 8) return { code: 'INVALID_COMBO', message: '牌数不合法' };
+  if (ids.length === 0 || ids.length > 10) return { code: 'INVALID_COMBO', message: '牌数不合法' };
   if (new Set(ids).size !== ids.length) return { code: 'DUPLICATE_CARD', message: '重复的牌' };
   if (play.combo.size !== ids.length) return { code: 'INVALID_COMBO', message: '牌型张数不符' };
   const wilds = new Set(ids.filter((id) => isWild(id, level)));
@@ -389,7 +389,7 @@ export function generatePlays(
 ): Play[] {
   const idx = indexHand(hand, level);
   const out: Play[] = [];
-  const maxSize = Math.min(8, hand.length);
+  const maxSize = Math.min(10, hand.length);
   const sizes: number[] = [];
   if (toBeat && !isBomb(toBeat)) sizes.push(toBeat.size);
   for (let s = 4; s <= maxSize; s++) if (!sizes.includes(s)) sizes.push(s);

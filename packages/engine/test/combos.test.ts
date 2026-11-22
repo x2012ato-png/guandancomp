@@ -135,9 +135,9 @@ describe('逢人配（红桃级牌）', () => {
 
 describe('比较', () => {
   const c = (type: Combo['type'], key: number, size: number): Combo => ({ type, key, size });
-  it('炸弹等级：4 < 5 < 同花顺 < 6 < 7 < 8 < 天王炸', () => {
-    const order = [c('bomb', 14, 4), c('bomb', 3, 5), c('straightFlush', 6, 5), c('bomb', 3, 6), c('bomb', 3, 7), c('bomb', 3, 8), c('jokerBomb', 17, 4)];
-    expect(order.map(bombTier)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  it('炸弹等级：4 < 5 < 同花顺 < 6 < 7 < 8 < 9 < 10 < 天王炸', () => {
+    const order = [c('bomb', 14, 4), c('bomb', 3, 5), c('straightFlush', 6, 5), c('bomb', 3, 6), c('bomb', 3, 7), c('bomb', 3, 8), c('bomb', 3, 9), c('bomb', 3, 10), c('jokerBomb', 17, 4)];
+    expect(order.map(bombTier)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     for (let i = 0; i < order.length; i++)
       for (let j = 0; j < order.length; j++) expect(beats(order[i]!, order[j]!)).toBe(i > j);
   });

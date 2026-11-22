@@ -6,6 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "eval:ai": "node packages/ai/bench/evaluate.ts",
+    "eval:danzero": "node packages/ai/bench/evaluateDanZero.ts",
+    "start:ai": "python3 ai-service/main.py",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev:server": "npm -w @guandan/server run dev",
     "dev:client": "npm -w @guandan/client run dev",

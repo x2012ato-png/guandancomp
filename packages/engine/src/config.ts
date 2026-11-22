@@ -43,7 +43,7 @@ export const DEFAULT_RULES: RulesConfig = Object.freeze({
   aFailLimit: 3,
   upgradeAfterAReset: false,
   returnMaxRank: 10,
-  returnAllowLevelCard: true,
+  returnAllowLevelCard: false,
   doubleTributeTie: 'clockwise',
   doubleTributeTieLeader: 'headNext',
   sameTeamTribute: true,

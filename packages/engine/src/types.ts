@@ -24,7 +24,7 @@ export type ComboType =
   | 'straight' // 顺子（恰好 5 张，A 可作 1 或 14，级牌按自然点数）
   | 'tube' //     连对/三连对（恰好 3 对）
   | 'plate' //    钢板（恰好 2 个连续三张）
-  | 'bomb' //     4–8 张同点炸弹
+  | 'bomb' //     4–10 张同点炸弹（含逢人配最多 10 张）
   | 'straightFlush' // 同花顺
   | 'jokerBomb'; //   天王炸（4 王）
 

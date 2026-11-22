@@ -40,18 +40,21 @@ export function validTributeCards(hand: readonly CardId[], level: Level): CardId
   return candidates.filter((id) => cardPower(id, level) === max);
 }
 
-/** 可还贡的牌：点数 ≤ returnMaxRank 的非王牌（无则退化为最小的牌） */
+/** 可还贡的牌：点数 ≤ returnMaxRank 的非王牌（无则退化为除红桃级牌外最小的牌） */
 export function validReturnCards(hand: readonly CardId[], level: Level, cfg: RulesConfig): CardId[] {
   const ok = hand.filter((id) => {
     const c = cardOf(id);
     if (isJokerRank(c.rank)) return false;
     if (c.rank > cfg.returnMaxRank) return false;
+    if (isWild(id, level)) return false;
     if (c.rank === level && !cfg.returnAllowLevelCard) return false;
     return true;
   });
   if (ok.length > 0) return ok;
-  const min = Math.min(...hand.map((id) => cardPower(id, level)));
-  return hand.filter((id) => cardPower(id, level) === min);
+  const nonWild = hand.filter((id) => !isWild(id, level));
+  const pool = nonWild.length > 0 ? nonWild : hand;
+  const min = Math.min(...pool.map((id) => cardPower(id, level)));
+  return pool.filter((id) => cardPower(id, level) === min);
 }
 
 /** 贡牌全部交齐后，确定谁给谁 */

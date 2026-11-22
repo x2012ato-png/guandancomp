@@ -34,19 +34,35 @@ export function parseExternalAI(value: unknown, previous?: ExternalAIConfig): Ex
   } catch { return null; }
 }
 
+function withoutCards(hand: readonly number[], used: readonly number[]): number[] {
+  const s = new Set(used);
+  return hand.filter(c => !s.has(c));
+}
+
 function legalChoices(view: PlayerView): AIDecision[] {
   if (view.myDuty === 'tribute') return validTributeCards(view.myHand, view.level).map(card => ({ type: 'tribute', card }));
   if (view.myDuty === 'return') return validReturnCards(view.myHand, view.level, view.config).map(card => ({ type: 'returnTribute', card }));
   if (view.myDuty !== 'play') return [];
-  const choices: AIDecision[] = generatePlays(view.myHand, view.level, view.config, view.trick?.lastPlay?.play.combo)
-    .map(play => ({ type: 'play', play }));
+  const toBeat = view.trick?.lastPlay?.play.combo;
+  const plays = generatePlays(view.myHand, view.level, view.config, toBeat);
+  const flushes = (toBeat ? generatePlays(view.myHand, view.level, view.config) : plays).filter(p => p.combo.type === 'straightFlush');
+  if (flushes.length) {
+    const seen = new Set(plays.map(p => `${p.combo.type}:${p.combo.key}:${p.combo.suit ?? ''}:${[...p.cards].sort((a, b) => a - b)}`));
+    for (const flush of flushes) {
+      for (const play of generatePlays(withoutCards(view.myHand, flush.cards), view.level, view.config, toBeat)) {
+        const key = `${play.combo.type}:${play.combo.key}:${play.combo.suit ?? ''}:${[...play.cards].sort((a, b) => a - b)}`;
+        if (!seen.has(key)) { seen.add(key); plays.push(play); }
+      }
+    }
+  }
+  const choices: AIDecision[] = plays.map(play => ({ type: 'play', play }));
   if (view.trick?.lastPlay) choices.push({ type: 'pass' });
   return choices;
 }
 
 function choiceDescription(decision: AIDecision, index: number) {
   if (decision.type === 'pass') return { index, action: '不要' };
-  if (decision.type === 'tribute' || decision.type === 'returnTribute') return { index, action: decision.type === 'tribute' ? '进贡' : '还贡', card: cardLabel(decision.card) };
+  if (decision.type === 'tribute' || decision.type === 'returnTribute') return { index, action: decision.type === 'tribute' ? '进贡' : '还贡', card: cardLabel(decision.card), cardId: decision.card };
   return { index, action: '出牌', combo: comboLabel(decision.play.combo), comboData: decision.play.combo, cards: decision.play.cards.map(cardLabel), cardIds: decision.play.cards, wildAssignments: decision.play.wildAssignments };
 }
 

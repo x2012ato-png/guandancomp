@@ -266,19 +266,19 @@ describe('进贡 / 还贡 / 抗贡', () => {
   });
 
   it('双下贡牌相同：按顺时针各给下家（R7），头游下家先出（R8）', () => {
-    // 直接构造：两家进贡同点牌
+    // 直接构造：两家进贡同点牌（本局升到打 5，还贡牌使用非级牌 S6）
     const base = afterHand([0, 2, 1, 3], 1);
     let s: GameState = {
       ...base,
       phase: 'tribute',
       handNo: 2,
-      hands: [cards('S3'), cards('SA S4'), cards('S5'), cards('DA D4')],
+      hands: [cards('S3'), cards('SA S4'), cards('S6'), cards('DA D4')],
       tribute: { kind: 'double', payers: [1, 3], receivers: [0, 2], paid: [], links: [] },
     };
     s = ok(s, { type: 'tribute', seat: 1, card: card('SA') });
     s = ok(s, { type: 'tribute', seat: 3, card: card('DA') });
     expect(s.tribute!.links.map((l) => [l.from, l.to])).toEqual([[1, 2], [3, 0]]);
-    s = ok(s, { type: 'returnTribute', seat: 2, card: card('S5') });
+    s = ok(s, { type: 'returnTribute', seat: 2, card: card('S6') });
     s = ok(s, { type: 'returnTribute', seat: 0, card: card('S3') });
     expect(s.turn).toBe(1);
   });
