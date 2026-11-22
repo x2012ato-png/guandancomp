@@ -19,8 +19,15 @@
 .ready-countdown{font-variant-numeric:tabular-nums;white-space:nowrap}
 .external-ai-overlay{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:16px;background:#071b17c9}
 .external-ai-dialog{width:min(100%,520px);max-height:calc(100dvh - 32px);overflow:auto;background:#173c32;border:1px solid #d6b76d;border-radius:12px;padding:20px;box-shadow:0 18px 60px #0009}
-.external-ai-dialog h2{font-size:21px;margin:0 0 10px}.external-ai-dialog p{font-size:13px;line-height:1.6;color:#c1d1c8;margin:8px 0}.external-ai-dialog label{margin:14px 0;gap:5px}.external-ai-dialog input{width:100%;min-width:0}.external-ai-dialog .external-ai-error{color:#ffd2c5}.external-ai-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.external-ai-dialog h2{font-size:21px;margin:0 0 10px}.external-ai-dialog p{font-size:13px;line-height:1.6;color:#c1d1c8;margin:8px 0}.external-ai-dialog label{margin:14px 0;gap:5px}.external-ai-dialog input,.external-ai-dialog select{width:100%;min-width:0}.external-ai-dialog .external-ai-error{color:#ffd2c5}.external-ai-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .external-ai-dialog .external-ai-clear{display:flex;align-items:center;gap:8px}.external-ai-dialog .external-ai-clear input{width:auto}
+.external-ai-combobox{position:relative;display:flex;align-items:center}
+.external-ai-combobox input{padding-right:34px}
+.external-ai-combo-toggle{position:absolute;right:4px;top:50%;transform:translateY(-50%);padding:4px 8px;min-width:0;line-height:1;background:transparent;border:none;color:#c1d1c8}
+.external-ai-combo-list{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:10;margin:0;padding:4px;list-style:none;background:#102c27;border:1px solid #d6b76d;border-radius:8px;box-shadow:0 10px 28px #0008}
+.external-ai-combo-list[hidden]{display:none}
+.external-ai-combo-list button{display:block;width:100%;text-align:left;padding:6px 8px;border:none;border-radius:6px;background:transparent;color:#f5f2e9;font-size:13px}
+.external-ai-combo-list button:hover,.external-ai-combo-list button.selected{background:#235245}
 .card-suit{margin-top:2px}
 .card-wild{margin-top:3px;color:#a47414;font-size:10px}
 .played{--card-width:44px;margin:0 auto;min-height:0}

@@ -1,5 +1,54 @@
-import { useState } from 'react';
+import { useRef, useState, type InputHTMLAttributes } from 'react';
 import type { ExternalAIAPI, ExternalAISettings } from '@guandan/protocol';
+
+const PRESET_BASE_URLS: Record<ExternalAIAPI, readonly string[]> = {
+  openai: ['http://192.168.0.200:1234/v1', 'http://24.159.166.232:1234/v1'],
+  lmstudio: ['http://192.168.0.200:1234/api/v1', 'http://24.159.166.232:1234/api/v1'],
+};
+
+const PRESET_MODELS = ['qwen/qwen3.5-9b'] as const;
+
+function ComboInput({
+  value,
+  options,
+  onChange,
+  toggleLabel,
+  ...inputProps
+}: {
+  value: string;
+  options: readonly string[];
+  onChange: (next: string) => void;
+  toggleLabel: string;
+} & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  const [open, setOpen] = useState(false);
+  return <div
+    className="external-ai-combobox"
+    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}
+  >
+    <input
+      {...inputProps}
+      value={value}
+      onChange={event => onChange(event.target.value)}
+      onKeyDown={event => { if (event.key === 'Escape') setOpen(false); }}
+    />
+    <button
+      type="button"
+      className="external-ai-combo-toggle"
+      aria-label={toggleLabel}
+      aria-expanded={open}
+      onClick={() => setOpen(current => !current)}
+    >▾</button>
+    <ul className="external-ai-combo-list" role="listbox" hidden={!open}>
+      {options.map(option => <li key={option} role="option" aria-selected={value === option}>
+        <button
+          type="button"
+          className={value === option ? 'selected' : undefined}
+          onClick={() => { onChange(option); setOpen(false); }}
+        >{option}</button>
+      </li>)}
+    </ul>
+  </div>;
+}
 
 export function ExternalAIForm({ seat, initial, saving, error, onSubmit, onCancel }: {
   seat: number;
@@ -14,19 +63,35 @@ export function ExternalAIForm({ seat, initial, saving, error, onSubmit, onCance
   const [model, setModel] = useState(initial?.model ?? '');
   const [apiKey, setApiKey] = useState('');
   const [clearKey, setClearKey] = useState(false);
-  return <div className="external-ai-overlay" onClick={onCancel}>
+  const backdropPressed = useRef(false);
+  const presetUrls = PRESET_BASE_URLS[apiType];
+  return <div
+    className="external-ai-overlay"
+    onMouseDown={event => { backdropPressed.current = event.target === event.currentTarget; }}
+    onClick={event => {
+      const shouldClose = backdropPressed.current && event.target === event.currentTarget;
+      backdropPressed.current = false;
+      if (shouldClose) onCancel();
+    }}
+  >
     <section className="external-ai-dialog" role="dialog" aria-modal="true" aria-labelledby="external-ai-title" onClick={event => event.stopPropagation()}>
       <h2 id="external-ai-title">配置座位 {seat + 1} 的外部 AI</h2>
       <p>每个机器人可使用不同配置。</p>
       <form onSubmit={event => { event.preventDefault(); onSubmit({ apiType, baseUrl, model, apiKey: clearKey ? null : apiKey }); }}>
         <label>接口类型<select value={apiType} onChange={event => {
           const next = event.target.value as ExternalAIAPI;
-          if (next === 'lmstudio' && baseUrl === 'https://api.openai.com/v1') setBaseUrl('http://127.0.0.1:1234');
-          if (next === 'openai' && baseUrl === 'http://127.0.0.1:1234') setBaseUrl('https://api.openai.com/v1');
+          const prevIdx = PRESET_BASE_URLS[apiType].indexOf(baseUrl);
+          if (prevIdx >= 0) setBaseUrl(PRESET_BASE_URLS[next][prevIdx]!);
+          else if (next === 'lmstudio' && baseUrl === 'https://api.openai.com/v1') setBaseUrl('http://127.0.0.1:1234');
+          else if (next === 'openai' && baseUrl === 'http://127.0.0.1:1234') setBaseUrl('https://api.openai.com/v1');
           setApiType(next);
         }}><option value="openai">OpenAI 兼容接口</option><option value="lmstudio">LM Studio（局内增量会话）</option></select></label>
-        <label>API Base URL<input type="url" required value={baseUrl} maxLength={2048} onChange={event => setBaseUrl(event.target.value)} placeholder={apiType === 'lmstudio' ? 'http://服务器可访问的地址:1234' : 'https://example.com/v1'} autoComplete="off" /></label>
-        <label>模型名称<input required value={model} maxLength={200} onChange={event => setModel(event.target.value)} placeholder="输入服务商提供的模型名称" autoComplete="off" /></label>
+        <label>API Base URL
+          <ComboInput type="url" required value={baseUrl} options={presetUrls} onChange={setBaseUrl} toggleLabel="选择预设 API Base URL" maxLength={2048} placeholder={apiType === 'lmstudio' ? 'http://服务器可访问的地址:1234' : 'https://example.com/v1'} autoComplete="off" />
+        </label>
+        <label>模型名称
+          <ComboInput required value={model} options={PRESET_MODELS} onChange={setModel} toggleLabel="选择预设模型名称" maxLength={200} placeholder="输入或选择模型名称" autoComplete="off" />
+        </label>
         <label>API 密钥<input type="password" value={apiKey} maxLength={2048} onChange={event => setApiKey(event.target.value)} placeholder={initial ? '留空保留同一地址的原密钥' : '无需认证时可留空'} autoComplete="new-password" disabled={clearKey} /></label>
         {initial && <label className="external-ai-clear"><input type="checkbox" checked={clearKey} onChange={event => setClearKey(event.target.checked)} />清除已保存的密钥</label>}
         <p>服务器会发送该机器人的手牌和公开牌局信息；服务商可能收取调用费用。密钥仅保存在服务器内存中。</p>

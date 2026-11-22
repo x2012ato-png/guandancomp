@@ -10,6 +10,9 @@ describe('外部 AI 配置', () => {
     expect(html).toContain('API Base URL');
     expect(html).toContain('LM Studio（局内增量会话）');
     expect(html).toContain('模型名称');
+    expect(html).toContain('http://192.168.0.200:1234/v1');
+    expect(html).toContain('http://24.159.166.232:1234/v1');
+    expect(html).toContain('qwen/qwen3.5-9b');
     expect(html).toContain('type="password"');
     expect(html).toContain('机器人的手牌和公开牌局信息');
   });
@@ -26,6 +29,8 @@ describe('外部 AI 配置', () => {
     const html = renderToStaticMarkup(createElement(ExternalAIForm, { seat: 1, initial: { apiType: 'lmstudio', baseUrl: 'http://127.0.0.1:1234', model: 'local-model' }, saving: false, error: '', onSubmit: () => {}, onCancel: () => {} }));
     expect(html).toContain('value="lmstudio" selected');
     expect(html).toContain('http://127.0.0.1:1234');
+    expect(html).toContain('http://192.168.0.200:1234/api/v1');
+    expect(html).toContain('http://24.159.166.232:1234/api/v1');
     expect(html).toContain('每个机器人每局使用独立会话');
   });
 });
