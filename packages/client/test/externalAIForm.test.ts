@@ -10,6 +10,8 @@ describe('外部 AI 配置', () => {
     expect(html).toContain('API Base URL');
     expect(html).toContain('LM Studio（局内增量会话）');
     expect(html).toContain('模型名称');
+    expect(html).toContain('超时时间（秒）');
+    expect(html).toContain('value="30"');
     expect(html).toContain('http://192.168.0.200:1234/v1');
     expect(html).toContain('http://24.159.166.232:1234/v1');
     expect(html).toContain('qwen/qwen3.5-9b');
@@ -26,9 +28,10 @@ describe('外部 AI 配置', () => {
   });
 
   it('重新打开 LM Studio 配置时保留接口类型和地址', () => {
-    const html = renderToStaticMarkup(createElement(ExternalAIForm, { seat: 1, initial: { apiType: 'lmstudio', baseUrl: 'http://127.0.0.1:1234', model: 'local-model' }, saving: false, error: '', onSubmit: () => {}, onCancel: () => {} }));
+    const html = renderToStaticMarkup(createElement(ExternalAIForm, { seat: 1, initial: { apiType: 'lmstudio', baseUrl: 'http://127.0.0.1:1234', model: 'local-model', timeoutMs: 45_000 }, saving: false, error: '', onSubmit: () => {}, onCancel: () => {} }));
     expect(html).toContain('value="lmstudio" selected');
     expect(html).toContain('http://127.0.0.1:1234');
+    expect(html).toContain('value="45"');
     expect(html).toContain('http://192.168.0.200:1234/api/v1');
     expect(html).toContain('http://24.159.166.232:1234/api/v1');
     expect(html).toContain('每个机器人每局使用独立会话');

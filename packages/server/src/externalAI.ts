@@ -2,10 +2,12 @@ import { cardLabel, comboLabel, generatePlays, partnerOf, rankLabel, validReturn
 import type { AIDecision } from '@guandan/ai';
 import type { ExternalAIAPI, ExternalAISettings } from '@guandan/protocol';
 
-export interface ExternalAIConfig { readonly apiType?: ExternalAIAPI; readonly baseUrl: string; readonly model: string; readonly apiKey: string }
+export interface ExternalAIConfig { readonly apiType?: ExternalAIAPI; readonly baseUrl: string; readonly model: string; readonly apiKey: string; readonly timeoutMs?: number }
 export interface ExternalAISession { readonly responseId: string; readonly view: PlayerView }
-export const EXTERNAL_AI_TIMEOUT_MS = 15_000;
-export const LM_STUDIO_TIMEOUT_MS = 60_000;
+export const EXTERNAL_AI_TIMEOUT_MS = 30_000;
+export const LM_STUDIO_TIMEOUT_MS = 30_000;
+export const EXTERNAL_AI_MIN_TIMEOUT_MS = 1_000;
+export const EXTERNAL_AI_MAX_TIMEOUT_MS = 300_000;
 
 /** 空密钥在修改同一地址时保留旧值；null 明确清除。 */
 export function parseExternalAI(value: unknown, previous?: ExternalAIConfig): ExternalAIConfig | null {
@@ -13,6 +15,7 @@ export function parseExternalAI(value: unknown, previous?: ExternalAIConfig): Ex
   const input = value as Partial<ExternalAISettings>;
   if (typeof input.baseUrl !== 'string' || typeof input.model !== 'string' ||
       (input.apiType !== undefined && input.apiType !== 'openai' && input.apiType !== 'lmstudio') ||
+      (input.timeoutMs !== undefined && (typeof input.timeoutMs !== 'number' || !Number.isInteger(input.timeoutMs) || input.timeoutMs < EXTERNAL_AI_MIN_TIMEOUT_MS || input.timeoutMs > EXTERNAL_AI_MAX_TIMEOUT_MS)) ||
       (input.apiKey !== undefined && input.apiKey !== null && typeof input.apiKey !== 'string')) return null;
   const model = input.model.trim(), suppliedKey = input.apiKey?.trim() ?? '';
   if (!model || model.length > 200 || !input.baseUrl.trim() || input.baseUrl.length > 2048 || suppliedKey.length > 2048 || /[\r\n]/.test(suppliedKey)) return null;
@@ -21,7 +24,13 @@ export function parseExternalAI(value: unknown, previous?: ExternalAIConfig): Ex
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return null;
     const baseUrl = url.toString().replace(/\/+$/, '');
     const key = input.apiKey === null ? '' : suppliedKey || (previous?.baseUrl === baseUrl ? previous.apiKey : '');
-    return { baseUrl, model, apiKey: key, ...(input.apiType === 'lmstudio' ? { apiType: 'lmstudio' } : {}) };
+    return {
+      baseUrl,
+      model,
+      apiKey: key,
+      ...(input.apiType === 'lmstudio' ? { apiType: 'lmstudio' } : {}),
+      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    };
   } catch { return null; }
 }
 
@@ -80,7 +89,8 @@ const SYSTEM_PROMPT = '你是掼蛋选手，与对家一队。只能从提供的
 export function runExternalAI(config: ExternalAIConfig, view: PlayerView, done: (decision: AIDecision | null, session?: ExternalAISession) => void, session?: ExternalAISession): () => void {
   const controller = new AbortController();
   let finished = false;
-  const timer = setTimeout(() => controller.abort(), config.apiType === 'lmstudio' ? LM_STUDIO_TIMEOUT_MS : EXTERNAL_AI_TIMEOUT_MS);
+  const timeoutMs = config.timeoutMs ?? (config.apiType === 'lmstudio' ? LM_STUDIO_TIMEOUT_MS : EXTERNAL_AI_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const finish = (decision: AIDecision | null, nextSession?: ExternalAISession) => {
     if (finished) return;
     finished = true;

@@ -19,6 +19,10 @@ describe('外部 AI', () => {
     expect(parseExternalAI({ baseUrl: config.baseUrl, model: '', apiKey: '' })).toBeNull();
     expect(parseExternalAI({ baseUrl: config.baseUrl, model: 'x', apiKey: 'a\nb' })).toBeNull();
     expect(parseExternalAI({ baseUrl: 'http://localhost:1234', model: 'local', apiType: 'lmstudio' })).toEqual({ baseUrl: 'http://localhost:1234', model: 'local', apiKey: '', apiType: 'lmstudio' });
+    expect(parseExternalAI({ baseUrl: 'http://localhost:1234', model: 'local', apiType: 'lmstudio', timeoutMs: 45_000 })).toEqual({ baseUrl: 'http://localhost:1234', model: 'local', apiKey: '', apiType: 'lmstudio', timeoutMs: 45_000 });
+    expect(parseExternalAI({ baseUrl: config.baseUrl, model: 'x', timeoutMs: 500 })).toBeNull();
+    expect(parseExternalAI({ baseUrl: config.baseUrl, model: 'x', timeoutMs: 300_001 })).toBeNull();
+    expect(parseExternalAI({ baseUrl: config.baseUrl, model: 'x', timeoutMs: 1500.5 })).toBeNull();
     expect(parseExternalAI({ baseUrl: config.baseUrl, model: 'x', apiType: 'invalid' })).toBeNull();
   });
 
@@ -140,9 +144,15 @@ describe('外部 AI', () => {
     expect(cancelled).not.toHaveBeenCalled();
     const native = vi.fn();
     runExternalAI({ ...config, apiType: 'lmstudio' }, view, native);
-    await vi.advanceTimersByTimeAsync(EXTERNAL_AI_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(LM_STUDIO_TIMEOUT_MS - 1);
     expect(native).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(LM_STUDIO_TIMEOUT_MS - EXTERNAL_AI_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(1);
     expect(native).toHaveBeenCalledWith(null);
+    const custom = vi.fn();
+    runExternalAI({ ...config, timeoutMs: 5_000 }, view, custom);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(custom).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(custom).toHaveBeenCalledWith(null);
   });
 });

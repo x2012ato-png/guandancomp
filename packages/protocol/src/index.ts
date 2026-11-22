@@ -62,6 +62,7 @@ export interface ExternalAISettings {
   readonly apiType?: ExternalAIAPI;
   readonly baseUrl: string;
   readonly model: string;
+  readonly timeoutMs?: number;
   /** null 清除现有密钥；空字符串保留同一地址已有密钥。 */
   readonly apiKey?: string | null;
 }
@@ -71,7 +72,7 @@ export interface SeatInfo {
   readonly kind: SeatKind;
   readonly botKind: BotKind | null;
   /** 外部 AI 的非密钥配置；密钥不会出现在房间快照中。 */
-  readonly externalAI?: { readonly apiType?: ExternalAIAPI; readonly baseUrl: string; readonly model: string } | null;
+  readonly externalAI?: { readonly apiType?: ExternalAIAPI; readonly baseUrl: string; readonly model: string; readonly timeoutMs?: number } | null;
   readonly nickname: string | null;
   readonly playerId: string | null;
   readonly connected: boolean;

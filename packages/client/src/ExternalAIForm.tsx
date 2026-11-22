@@ -7,6 +7,7 @@ const PRESET_BASE_URLS: Record<ExternalAIAPI, readonly string[]> = {
 };
 
 const PRESET_MODELS = ['qwen/qwen3.5-9b'] as const;
+const DEFAULT_TIMEOUT_SECONDS = 30;
 
 function ComboInput({
   value,
@@ -52,7 +53,7 @@ function ComboInput({
 
 export function ExternalAIForm({ seat, initial, saving, error, onSubmit, onCancel }: {
   seat: number;
-  initial: { readonly apiType?: ExternalAIAPI; readonly baseUrl: string; readonly model: string } | null;
+  initial: { readonly apiType?: ExternalAIAPI; readonly baseUrl: string; readonly model: string; readonly timeoutMs?: number } | null;
   saving: boolean;
   error: string;
   onSubmit: (settings: ExternalAISettings) => void;
@@ -61,6 +62,7 @@ export function ExternalAIForm({ seat, initial, saving, error, onSubmit, onCance
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? 'https://api.openai.com/v1');
   const [apiType, setApiType] = useState<ExternalAIAPI>(initial?.apiType ?? 'openai');
   const [model, setModel] = useState(initial?.model ?? '');
+  const [timeoutSec, setTimeoutSec] = useState(String(initial?.timeoutMs !== undefined ? Math.round(initial.timeoutMs / 1000) : DEFAULT_TIMEOUT_SECONDS));
   const [apiKey, setApiKey] = useState('');
   const [clearKey, setClearKey] = useState(false);
   const backdropPressed = useRef(false);
@@ -77,7 +79,12 @@ export function ExternalAIForm({ seat, initial, saving, error, onSubmit, onCance
     <section className="external-ai-dialog" role="dialog" aria-modal="true" aria-labelledby="external-ai-title" onClick={event => event.stopPropagation()}>
       <h2 id="external-ai-title">配置座位 {seat + 1} 的外部 AI</h2>
       <p>每个机器人可使用不同配置。</p>
-      <form onSubmit={event => { event.preventDefault(); onSubmit({ apiType, baseUrl, model, apiKey: clearKey ? null : apiKey }); }}>
+      <form onSubmit={event => {
+        event.preventDefault();
+        const parsedTimeout = Number(timeoutSec);
+        const timeoutMs = Number.isFinite(parsedTimeout) ? Math.round(parsedTimeout * 1000) : DEFAULT_TIMEOUT_SECONDS * 1000;
+        onSubmit({ apiType, baseUrl, model, timeoutMs, apiKey: clearKey ? null : apiKey });
+      }}>
         <label>接口类型<select value={apiType} onChange={event => {
           const next = event.target.value as ExternalAIAPI;
           const prevIdx = PRESET_BASE_URLS[apiType].indexOf(baseUrl);
@@ -92,6 +99,7 @@ export function ExternalAIForm({ seat, initial, saving, error, onSubmit, onCance
         <label>模型名称
           <ComboInput required value={model} options={PRESET_MODELS} onChange={setModel} toggleLabel="选择预设模型名称" maxLength={200} placeholder="输入或选择模型名称" autoComplete="off" />
         </label>
+        <label>超时时间（秒）<input type="number" required min={1} max={300} step={1} value={timeoutSec} onChange={event => setTimeoutSec(event.target.value)} /></label>
         <label>API 密钥<input type="password" value={apiKey} maxLength={2048} onChange={event => setApiKey(event.target.value)} placeholder={initial ? '留空保留同一地址的原密钥' : '无需认证时可留空'} autoComplete="new-password" disabled={clearKey} /></label>
         {initial && <label className="external-ai-clear"><input type="checkbox" checked={clearKey} onChange={event => setClearKey(event.target.checked)} />清除已保存的密钥</label>}
         <p>服务器会发送该机器人的手牌和公开牌局信息；服务商可能收取调用费用。密钥仅保存在服务器内存中。</p>
