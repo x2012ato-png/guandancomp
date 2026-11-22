@@ -165,7 +165,7 @@ function App() {
  const reveal=showLastPlace ? game?.lastPlaceReveal : null;
  const seatPlays=trickPlaysBySeat(view?.trick ?? null,view?.phase==='playing',showLastBotPlay);
  const seatPasses=trickPassesBySeat(view?.trick ?? null,view?.phase==='playing');
- const plays=useMemo(()=>{if(!view || !selected.length || view.myDuty!=='play')return []; const last=view.trick?.lastPlay?.play.combo; return interpret(selected,view.level,view.config).filter(p=>!last || beats(p.combo,last));},[view,selected]);
+ const plays=useMemo(()=>{if(!view || !selected.length || view.myDuty!=='play')return []; const last=view.trick?.lastPlay?.play.combo; return interpret(selected,view.level,view.config).filter(p=>!last || beats(p.combo,last)).sort((a,b)=>(b.combo.type==='straightFlush'?1:0)-(a.combo.type==='straightFlush'?1:0));},[view,selected]);
  const chosen=plays[choice] ?? plays[0];
  function submitPlayAction(action:Extract<ClientGameAction,{type:'play'|'pass'}>){
   if(pendingActionRef.current)return;

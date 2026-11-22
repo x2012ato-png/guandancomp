@@ -10,7 +10,7 @@ export interface RulesConfig {
   readonly jokerPairInFullHouse: boolean;
   /** 【待确认 R2】三带二的三张与对子能否同点（如 33333 当三带二出）。默认不允许（5 张同点只能是炸弹）。 */
   readonly fullHouseSameRank: boolean;
-  /** 【待确认 R3】同花五连张能否由出牌人选择按普通顺子出。默认允许（出牌时需声明牌型）。 */
+  /** 【待确认 R3】同花五连张能否由出牌人选择按普通顺子出。默认不允许（同花顺只能作同花顺）。 */
   readonly straightFlushAsStraight: boolean;
   /** 【待确认 R4】打 A 失败次数上限，达到后退回 2；null 表示不限。默认 3。 */
   readonly aFailLimit: number | null;
@@ -39,7 +39,7 @@ export interface RulesConfig {
 export const DEFAULT_RULES: RulesConfig = Object.freeze({
   jokerPairInFullHouse: true,
   fullHouseSameRank: false,
-  straightFlushAsStraight: true,
+  straightFlushAsStraight: false,
   aFailLimit: 3,
   upgradeAfterAReset: false,
   returnMaxRank: 10,

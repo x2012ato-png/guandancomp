@@ -61,7 +61,7 @@ describe('口诀战术覆盖', () => {
     const pair = play('S4 D4', 'pair');
     const single = play('S6', 'single');
     const full = play('S3 D3 C3 S4 D4', 'fullHouse');
-    const straight = play('S3 S4 S5 S6 S7', 'straight');
+    const straight = play('S3 D4 S5 S6 S7', 'straight');
     expect(tacticalAdjustments(v, triple, { ...base, opponents: [10, 12] }).some(item => item.code === 'bare_triple')).toBe(true);
     for (const [count, candidate, code] of [
       [5, pair, 'opp5_pair'], [6, triple, 'opp6_triple'], [7, full, 'opp78_composite'],

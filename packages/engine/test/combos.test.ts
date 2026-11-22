@@ -80,11 +80,11 @@ describe('基础牌型识别', () => {
     expect(sigs(five2)).toEqual(['bomb:9:5:', 'fullHouse:9:5:']);
   });
 
-  it('同花顺；可选当普通顺子（R3）', () => {
+  it('同花顺；默认不可当普通顺子（R3）', () => {
     const r = interpret(cards('S5 S6 S7 S8 S9'), 2, cfg);
-    expect(sigs(r)).toEqual(['straight:9:5:', 'straightFlush:9:5:S']);
-    const strict = interpret(cards('S5 S6 S7 S8 S9'), 2, makeRules({ straightFlushAsStraight: false }));
-    expect(sigs(strict)).toEqual(['straightFlush:9:5:S']);
+    expect(sigs(r)).toEqual(['straightFlush:9:5:S']);
+    const loose = interpret(cards('S5 S6 S7 S8 S9'), 2, makeRules({ straightFlushAsStraight: true }));
+    expect(sigs(loose)).toEqual(['straight:9:5:', 'straightFlush:9:5:S']);
   });
 });
 
