@@ -9,6 +9,7 @@
  * 第 1 层 `567 -> 512` 的前 513 维矩阵乘法只需每个回合计算 1 次，每个候选动作只需计算后 54 维中非零的 1~10 张牌！
  */
 import {
+  cardPower,
   DECK_SIZE,
   generatePlays,
   makeRandom,
@@ -500,39 +501,145 @@ export function encodeDanZeroState513(view: PlayerView, feature567: Int8Array): 
   feature567[500 + curRankIdx - 1] = 1;
 }
 
-function chooseDanZeroTribute(view: PlayerView): CardId {
-  const cards = validTributeCards(view.myHand, view.level);
-  // Prefer non-heart if multiple suits exist
-  const nonHeart = cards.find((cid) => {
-    const i = cid % 54;
-    return i >= 52 || Math.floor(i / 13) !== 1;
-  });
-  return nonHeart ?? cards[0]!;
+/**
+ * 评估一份 27 张手牌在开局时的 DanZero 神经网络期望价值（取该手牌在首出视角下的 Top-3 动作平均 Q 值）。
+ */
+function evaluateHandByDanZeroNet(view: PlayerView, hand27: readonly CardId[]): number {
+  const virtualView: PlayerView = {
+    ...view,
+    phase: 'playing',
+    myDuty: 'play',
+    myHand: hand27,
+    turn: view.seat,
+    trick: { leader: view.seat, lastPlay: null, passed: [], history: [] },
+  };
+  const ranked = rankDanZeroCandidates(virtualView);
+  if (ranked.length === 0) return 0;
+  const k = Math.min(3, ranked.length);
+  let sum = 0;
+  for (let i = 0; i < k; i++) sum += ranked[i]!.q;
+  return sum / k;
 }
 
-function chooseDanZeroReturn(view: PlayerView): CardId {
+/**
+ * 统计手牌中可构成的同花顺数量（含逢人配辅助）。
+ */
+function countStraightFlushes(hand: readonly CardId[], view: PlayerView): number {
+  return generatePlays(hand, view.level, view.config).filter((p) => p.combo.type === 'straightFlush').length;
+}
+
+/**
+ * 进贡决策：
+ * 当手里有多张不同花色的同点最大牌（例如两张不同花色的级牌或 A）时，
+ * 综合比较去掉该牌后的：
+ *   1. 同花顺保留数量（绝不优先拆同花顺花色）
+ *   2. 理牌手数（`planHand` turns 越少越好）
+ *   3. DanZero 神经网络对剩余手牌的 Q 值评估
+ */
+export function chooseDanZeroTribute(view: PlayerView): CardId {
+  const cards = validTributeCards(view.myHand, view.level);
+  if (cards.length <= 1) return cards[0]!;
+
+  let bestCard = cards[0]!;
+  let bestScore = -Infinity;
+
+  for (const cid of cards) {
+    const remaining = withoutCards(view.myHand, [cid]);
+    const plan = planHand(remaining, view.level);
+    const flushes = countStraightFlushes(remaining, view);
+    const netValue = evaluateHandByDanZeroNet(view, remaining);
+    const i = cid % 54;
+    const isHeart = i < 52 && Math.floor(i / 13) === 1;
+
+    // 权重：保同花顺 (+40) > 保炸弹 (+30) > 减少出牌手数 (-10 * turns) > DanZero 网络估值 (+4 * netValue) > 非红桃花色微调
+    const score =
+      flushes * 40 +
+      plan.bombs.length * 30 -
+      plan.turns * 10 +
+      netValue * 4 +
+      (isHeart ? -0.1 : 0.1);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestCard = cid;
+    }
+  }
+  return bestCard;
+}
+
+/**
+ * 还贡决策：
+ * 结合四层考量从 28 张手牌中挑出最优还贡牌：
+ *   1. 同花顺与炸弹保护：绝不轻易拆掉同花顺或 4 张炸弹（5 张以上长炸弹拆 1 张仍保留炸弹）
+ *   2. 理牌结构手数（`planHand`）：不拆顺子、三连对、钢板，优先还纯孤张（杂牌）
+ *   3. 区分还给队友还是对手：
+ *      - 单下且末游是自己队友时（`sameTeamTribute`）：还给队友，适度避免极难出的死牌或按队友需求过渡
+ *      - 还给对手时：在同样不拆自己牌型的前提下，优先还点数更小、且不易帮对手凑成大顺子的牌
+ *   4. DanZero 神经网络对剩余 27 张手牌的整体 Q 值评估
+ */
+export function chooseDanZeroReturn(view: PlayerView): CardId {
   const cards = validReturnCards(view.myHand, view.level, view.config);
   if (cards.length <= 1) return cards[0]!;
+
+  // 判断接收还贡的人是队友还是对手
+  const myLink = view.tribute?.links.find((l) => l.to === view.seat);
+  const receiverSeat = myLink?.from;
+  const isReturningToTeammate = receiverSeat !== undefined && teamOf(receiverSeat) === teamOf(view.seat);
+
+  // 统计当前手牌各点数张数（识别孤张 vs 对子/三张/炸弹）
   const rankCounts = new Map<number, number>();
   for (const cid of view.myHand) {
     const i = cid % 54;
     const r = i === 52 ? 16 : i === 53 ? 17 : 2 + (i % 13);
     rankCounts.set(r, (rankCounts.get(r) ?? 0) + 1);
   }
-  let best = cards[0]!;
-  let bestScore = Infinity;
+
+  // 按花色+点数去重评估（同花色同点数的两张牌等价，避免重复跑神经网络）
+  const seenMod54 = new Map<number, number>();
+  let bestCard = cards[0]!;
+  let bestScore = -Infinity;
+
   for (const cid of cards) {
-    const i = cid % 54;
-    const r = i === 52 ? 16 : i === 53 ? 17 : 2 + (i % 13);
-    const count = rankCounts.get(r) ?? 1;
-    const rankWeight = r === view.level ? 15 : r;
-    const score = count * 100 + rankWeight;
-    if (score < bestScore) {
+    const mod = cid % 54;
+    let score = seenMod54.get(mod);
+    if (score === undefined) {
+      const remaining = withoutCards(view.myHand, [cid]);
+      const plan = planHand(remaining, view.level);
+      const flushes = countStraightFlushes(remaining, view);
+      const netValue = evaluateHandByDanZeroNet(view, remaining);
+
+      const r = mod === 52 ? 16 : mod === 53 ? 17 : 2 + (mod % 13);
+      const countInHand = rankCounts.get(r) ?? 1;
+      const pwr = cardPower(cid, view.level);
+
+      // 拆对子/三张的额外结构惩罚（纯孤张 countInHand === 1 无惩罚；5+张炸弹拆一张余下仍是炸弹惩罚较小）
+      const breakPenalty =
+        countInHand === 1 ? 0 : countInHand === 2 ? 6 : countInHand === 3 ? 4 : countInHand === 4 ? 35 : 3;
+
+      // 点数偏好：还给对手时越小越好（且 5 和 10 是顺子骨架，略加保留）；还给队友时不刻意压最小
+      const isStraightPivot = r === 5 || r === 10;
+      const rankPenalty = isReturningToTeammate
+        ? Math.abs(pwr - 5) * 0.3
+        : pwr * 0.8 + (isStraightPivot ? 1.2 : 0);
+
+      score =
+        flushes * 45 +
+        plan.bombs.length * 35 -
+        plan.turns * 12 -
+        breakPenalty -
+        rankPenalty +
+        netValue * 5;
+
+      seenMod54.set(mod, score);
+    }
+
+    if (score > bestScore) {
       bestScore = score;
-      best = cid;
+      bestCard = cid;
     }
   }
-  return best;
+
+  return bestCard;
 }
 
 export function rankDanZeroCandidates(view: PlayerView): { decision: AIDecision; q: number }[] {
