@@ -53,7 +53,7 @@ export interface SessionInfo {
 }
 
 export type SeatKind = 'empty' | 'human' | 'bot';
-export type BotKind = 'beginner' | 'coach' | 'danzero' | 'danzero-plus' | 'external';
+export type BotKind = 'beginner' | 'coach' | 'danzero' | 'danzero-deep' | 'external';
 
 export type ExternalAIAPI = 'openai' | 'lmstudio';
 

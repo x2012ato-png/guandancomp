@@ -206,8 +206,11 @@ describe('room service', () => {
     });
     expect((await host.socket.emitWithAck('room:addBot', {seat: 3, botKind: 'beginner'})).ok).toBe(true);
     const room = await roomUpdate;
-    expect(room.seats[2]).toMatchObject({kind: 'bot', botKind: 'coach', nickname: 'AI教练 3'});
-    expect(room.seats[3]).toMatchObject({kind: 'bot', botKind: 'beginner', nickname: 'AI 4'});
+    expect(room.seats[2]).toMatchObject({kind: 'bot', botKind: 'coach'});
+    expect(room.seats[3]).toMatchObject({kind: 'bot', botKind: 'beginner'});
+    expect(['阿大', '王二', '张三', '李四']).toContain(room.seats[2].nickname);
+    expect(['阿大', '王二', '张三', '李四']).toContain(room.seats[3].nickname);
+    expect(room.seats[2].nickname).not.toBe(room.seats[3].nickname);
     const dealt = waitForDeal(host.socket);
     const guidance = new Promise<Parameters<ServerToClientEvents['coach:advice']>[0]>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Coach analysis did not finish')), DEAL_DURATION_MS + 5000);

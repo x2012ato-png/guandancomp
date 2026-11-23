@@ -596,10 +596,10 @@ function evaluateLeafState(state: GameState, seat: Seat): number {
 }
 
 /**
- * DanZero+（深度搜索版）：
+ * DanZero（深度搜索版 / IS-MCTS）：
  *   1. 使用 DanZero 价值网络对当前所有合法动作评分，筛选 Top-K 候选动作（最多 4 个不同牌型/动作）
  *   2. 在采样出的未知手牌世界（Determinization）中，使用高速启发式推演策略向前模拟多步至残局/终局，
- *      叶节点由 DanZero 神经网络 Q 值与局面资源联合估值
+ *      叶节点由局面资源与头游控制联合估值
  *   3. 综合先验 Q(s, a) 与多世界蒙特卡洛推演回报选出最优动作
  */
 export function chooseDanZeroDeepPlay(
@@ -689,7 +689,7 @@ export function chooseDanZeroDeepPlay(
 }
 
 export interface DanZeroOptions {
-  /** 是否开启多步蒙特卡洛深度推演（DanZero+ 深度版） */
+  /** 是否开启多步蒙特卡洛深度推演（DanZero 深度搜索版） */
   readonly deep?: boolean;
   readonly samples?: number;
   readonly topK?: number;
@@ -699,11 +699,11 @@ export interface DanZeroOptions {
 /**
  * 创建内置的 DanZero 深度蒙特卡洛（DMC）策略。
  * - `deep: false`（默认）：0 层直觉版（纯神经网络单步推理，~5ms）
- * - `deep: true`：深度推演版（神经网络 Top-K 初筛 + 多世界深度推演，~200-600ms）
+ * - `deep: true`：深度推演版（神经网络 Top-K 初筛 + 多世界深度推演，~30-150ms）
  */
 export function createDanZeroPolicy(options: DanZeroOptions = {}): AIPolicy {
   return {
-    id: options.deep ? 'danzero-plus' : 'danzero',
+    id: options.deep ? 'danzero-deep' : 'danzero',
     decide(view: PlayerView, ctx?: DecisionContext): AIDecision | null {
       switch (view.myDuty) {
         case 'tribute':
